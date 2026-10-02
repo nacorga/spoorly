@@ -1,0 +1,698 @@
+import {
+  QUEUE_KEY,
+  RATE_LIMIT_KEY,
+  EVENT_EXPIRY_HOURS,
+  MAX_EVENT_AGE_MS_ON_RECOVERY,
+  REQUEST_TIMEOUT_MS,
+  PERMANENT_ERROR_LOG_THROTTLE_MS,
+  MAX_BEACON_PAYLOAD_SIZE,
+  PERSISTENCE_THROTTLE_MS,
+  MAX_SEND_RETRIES,
+  RETRY_BACKOFF_BASE_MS,
+  RETRY_BACKOFF_JITTER_MS,
+  LIB_VERSION,
+  MAX_CONSECUTIVE_NETWORK_FAILURES,
+  MAX_RECOVERY_FAILURES,
+  CIRCUIT_BREAKER_COOLDOWN_MS,
+  RATE_LIMIT_COOLDOWN_MS,
+  TEXT_PLAIN_CONTENT_TYPE,
+} from '../constants';
+import { PersistedEventsQueue, EventsQueue, PermanentError, RateLimitError, TimeoutError } from '../types';
+import { log, normalizeUrl } from '../utils';
+import { StorageManager } from './storage.manager';
+import { StateManager } from './state.manager';
+
+interface SendCallbacks {
+  onSuccess?: (eventCount?: number, events?: any[], body?: EventsQueue) => void;
+  /** `permanent` is true when the endpoint rejected the batch with a 4xx other than 408/429. */
+  onFailure?: (permanent?: boolean) => void;
+}
+
+/**
+ * Manages sending event queues to the configured endpoint with persistence,
+ * recovery, retry, circuit breaker, and 429 cooldown.
+ *
+ * **Storage Keys**:
+ * - Queue: `spoorly:{userId}:queue`
+ * - Rate limit cooldown: `spoorly:{userId}:rate_limit`
+ *
+ * **Multi-Tab Protection**: Persisted events include `lastPersistTime`; recovery
+ * skips events persisted within 1 second (active tab may retry).
+ */
+export class SenderManager extends StateManager {
+  private readonly storeManager: StorageManager;
+  private readonly apiUrl: string;
+  private lastPermanentErrorLog: { key: string; timestamp: number } | null = null;
+  private recoveryInProgress = false;
+  private lastMetadataTimestamp = 0;
+  /**
+   * Counts consecutive fetch() rejections where no HTTP response was received
+   * (DNS failure, connection refused). Resets on success. When this reaches
+   * MAX_CONSECUTIVE_NETWORK_FAILURES the circuit opens and further send attempts
+   * are skipped until CIRCUIT_BREAKER_COOLDOWN_MS elapses.
+   */
+  private consecutiveNetworkFailures = 0;
+  private circuitOpenedAt = 0;
+  /**
+   * Timestamp (epoch ms) before which `send()` must skip fetch() calls due to a
+   * prior 429 response. Mirrored to `localStorage` (keyed by userId) so the
+   * cooldown survives page navigations on traditional server-rendered sites and
+   * is discoverable by other tabs on the same origin.
+   */
+  private rateLimitedUntil = 0;
+  /**
+   * Storage key used when the current in-memory cooldown was armed. Captured at
+   * arm time so identity changes mid-cooldown can't make persist/clear
+   * operations target the wrong key.
+   */
+  private rateLimitStorageKeyAtArm: string | null = null;
+
+  constructor(storeManager: StorageManager, apiUrl: string) {
+    super();
+
+    this.storeManager = storeManager;
+    this.apiUrl = apiUrl;
+    this.rateLimitedUntil = this.loadRateLimitCooldown();
+  }
+
+  private getQueueStorageKey(): string {
+    const userId = this.get('userId') || 'anonymous';
+    return QUEUE_KEY(userId);
+  }
+
+  private getRateLimitStorageKey(): string {
+    const userId = this.get('userId') || 'anonymous';
+    return RATE_LIMIT_KEY(userId);
+  }
+
+  private getActiveRateLimitKey(): string {
+    return this.rateLimitStorageKeyAtArm ?? this.getRateLimitStorageKey();
+  }
+
+  private armRateLimitCooldown(until: number): void {
+    this.rateLimitedUntil = until;
+    this.rateLimitStorageKeyAtArm = this.getRateLimitStorageKey();
+    this.persistRateLimitCooldown(until);
+  }
+
+  private loadRateLimitCooldown(): number {
+    const key = this.getRateLimitStorageKey();
+    try {
+      const raw = this.storeManager.getItem(key);
+      if (!raw) return 0;
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value <= Date.now()) {
+        this.storeManager.removeItem(key);
+        return 0;
+      }
+      this.rateLimitStorageKeyAtArm = key;
+      return value;
+    } catch {
+      return 0;
+    }
+  }
+
+  private persistRateLimitCooldown(until: number): void {
+    const key = this.getActiveRateLimitKey();
+    try {
+      const raw = this.storeManager.getItem(key);
+      if (raw) {
+        const existing = Number(raw);
+        if (Number.isFinite(existing) && existing >= until) {
+          return;
+        }
+      }
+      this.storeManager.setItem(key, String(until));
+    } catch {
+      // Storage full or disabled — cooldown still works in-memory for this instance
+    }
+  }
+
+  private clearRateLimitCooldown(): void {
+    const key = this.getActiveRateLimitKey();
+    try {
+      const raw = this.storeManager.getItem(key);
+      if (raw) {
+        const stored = Number(raw);
+        if (Number.isFinite(stored) && stored > Date.now()) {
+          this.rateLimitedUntil = stored;
+          return;
+        }
+      }
+      this.storeManager.removeItem(key);
+    } catch {
+      // Ignore — cleared in-memory is enough
+    }
+    this.rateLimitedUntil = 0;
+    this.rateLimitStorageKeyAtArm = null;
+  }
+
+  private isRateLimited(): boolean {
+    if (this.rateLimitedUntil === 0) {
+      this.rateLimitedUntil = this.loadRateLimitCooldown();
+    }
+    if (this.rateLimitedUntil === 0) return false;
+    if (Date.now() >= this.rateLimitedUntil) {
+      this.clearRateLimitCooldown();
+      if (this.rateLimitedUntil === 0) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Sends events synchronously using `navigator.sendBeacon()`.
+   *
+   * Falls back to localStorage persistence on rate-limit cooldown, beacon
+   * rejection, or oversized payloads.
+   */
+  sendEventsQueueSync(body: EventsQueue): boolean {
+    if (this.isRateLimited()) {
+      log('debug', 'Rate-limit cooldown active, skipping sync send', {
+        data: {
+          cooldownRemainingMs: this.rateLimitedUntil - Date.now(),
+          events: body.events.length,
+        },
+      });
+      const stableBody = this.ensureBatchMetadata(body);
+      const existing = this.getPersistedData();
+      const existingFailures =
+        typeof existing?.recoveryFailures === 'number' && Number.isFinite(existing.recoveryFailures)
+          ? existing.recoveryFailures
+          : 0;
+      this.persistEventsWithFailureCount(stableBody, existingFailures, true);
+      return false;
+    }
+
+    return this.sendQueueSyncInternal(body);
+  }
+
+  /**
+   * Sends events asynchronously using `fetch()` with retry, circuit breaker, and 429 cooldown.
+   * Persists on failure for recovery on next page load.
+   */
+  async sendEventsQueue(body: EventsQueue, callbacks?: SendCallbacks): Promise<boolean> {
+    const stableBody = this.ensureBatchMetadata(body);
+
+    try {
+      const ok = await this.send(stableBody);
+
+      if (ok) {
+        this.clearPersistedEvents();
+        callbacks?.onSuccess?.(stableBody.events.length, stableBody.events, stableBody);
+      } else {
+        this.persistEvents(stableBody);
+        callbacks?.onFailure?.();
+      }
+
+      return ok;
+    } catch (error) {
+      if (error instanceof PermanentError) {
+        this.logPermanentError('Permanent error, not retrying', error);
+        this.clearPersistedEvents();
+        callbacks?.onFailure?.(true);
+        return false;
+      }
+
+      this.persistEvents(stableBody);
+      callbacks?.onFailure?.();
+      return false;
+    }
+  }
+
+  /**
+   * Recovers and attempts to resend events persisted from a previous session.
+   *
+   * Idempotent: safe to call multiple times (recovery flag prevents concurrent attempts).
+   */
+  async recoverPersistedEvents(callbacks?: SendCallbacks): Promise<void> {
+    if (this.recoveryInProgress) {
+      log('debug', 'Recovery already in progress, skipping duplicate attempt');
+      return;
+    }
+
+    this.recoveryInProgress = true;
+
+    let recoveryBody: EventsQueue | null = null;
+    let recoveryFailures = 0;
+
+    try {
+      const persistedData = this.getPersistedData();
+
+      if (!persistedData || !this.isDataRecent(persistedData) || persistedData.events.length === 0) {
+        this.clearPersistedEvents();
+        return;
+      }
+
+      const rawFailures = persistedData.recoveryFailures;
+      recoveryFailures =
+        typeof rawFailures === 'number' && Number.isFinite(rawFailures) && rawFailures >= 0 ? rawFailures : 0;
+      if (recoveryFailures >= MAX_RECOVERY_FAILURES) {
+        log('debug', `Discarding persisted events after ${recoveryFailures} failed recovery attempts`);
+        this.clearPersistedEvents();
+        callbacks?.onFailure?.();
+        return;
+      }
+
+      if (this.isRateLimited()) {
+        log('debug', 'Rate-limit cooldown active, deferring recovery', {
+          data: { cooldownRemainingMs: this.rateLimitedUntil - Date.now() },
+        });
+        callbacks?.onFailure?.();
+        return;
+      }
+
+      recoveryBody = this.ensureBatchMetadata(this.createRecoveryBody(persistedData));
+
+      if (recoveryBody.events.length === 0) {
+        log('debug', 'All persisted events exceeded the recovery age cutoff; discarding batch');
+        this.clearPersistedEvents();
+        return;
+      }
+
+      const ok = await this.send(recoveryBody);
+
+      if (ok) {
+        this.clearPersistedEvents();
+        callbacks?.onSuccess?.(persistedData.events.length, persistedData.events, recoveryBody);
+      } else {
+        this.persistEventsWithFailureCount(recoveryBody, recoveryFailures + 1, true);
+        callbacks?.onFailure?.();
+      }
+    } catch (error) {
+      if (error instanceof PermanentError) {
+        this.logPermanentError('Permanent error during recovery, clearing persisted events', error);
+        this.clearPersistedEvents();
+        callbacks?.onFailure?.();
+        return;
+      }
+
+      log('error', 'Failed to recover persisted events', { error });
+      if (recoveryBody) {
+        this.persistEventsWithFailureCount(recoveryBody, recoveryFailures + 1, true);
+      }
+      callbacks?.onFailure?.();
+    } finally {
+      this.recoveryInProgress = false;
+    }
+  }
+
+  /**
+   * Cleanup method called during `App.destroy()`. No-op — persisted events
+   * intentionally kept in localStorage for recovery.
+   */
+  stop(): void {}
+
+  private async backoffDelay(attempt: number): Promise<void> {
+    const exponentialDelay = RETRY_BACKOFF_BASE_MS * Math.pow(2, attempt);
+    const jitter = Math.random() * RETRY_BACKOFF_JITTER_MS;
+    return new Promise((resolve) => setTimeout(resolve, exponentialDelay + jitter));
+  }
+
+  private async send(body: EventsQueue): Promise<boolean> {
+    const requestBody = this.ensureBatchMetadata(body, body._metadata?.idempotency_token);
+
+    if (this.isRateLimited()) {
+      log('debug', 'Rate-limit cooldown active, skipping send', {
+        data: {
+          cooldownRemainingMs: this.rateLimitedUntil - Date.now(),
+          events: requestBody.events.length,
+        },
+      });
+      return false;
+    }
+
+    if (this.consecutiveNetworkFailures >= MAX_CONSECUTIVE_NETWORK_FAILURES) {
+      const elapsed = Date.now() - this.circuitOpenedAt;
+      if (elapsed < CIRCUIT_BREAKER_COOLDOWN_MS) {
+        log('debug', 'Network circuit open, skipping send', {
+          data: {
+            consecutiveNetworkFailures: this.consecutiveNetworkFailures,
+            cooldownRemainingMs: CIRCUIT_BREAKER_COOLDOWN_MS - elapsed,
+          },
+        });
+        return false;
+      }
+      // Half-open: allow one probe batch through.
+    }
+
+    const { url, payload } = this.prepareRequest(requestBody);
+    let allTimeouts = true;
+    let hadHttpResponse = false;
+
+    for (let attempt = 1; attempt <= MAX_SEND_RETRIES + 1; attempt++) {
+      try {
+        const response = await this.sendWithTimeout(url, payload);
+
+        if (response.ok) {
+          if (attempt > 1) {
+            log('info', `Send succeeded after ${attempt - 1} retry attempt(s)`, {
+              data: { events: requestBody.events.length, attempt },
+            });
+          }
+
+          this.consecutiveNetworkFailures = 0;
+          this.circuitOpenedAt = 0;
+          return true;
+        }
+
+        return false;
+      } catch (error) {
+        const isLastAttempt = attempt === MAX_SEND_RETRIES + 1;
+
+        if (error instanceof PermanentError) {
+          this.consecutiveNetworkFailures = 0;
+          this.circuitOpenedAt = 0;
+          throw error;
+        }
+
+        if (error instanceof RateLimitError) {
+          this.consecutiveNetworkFailures = 0;
+          this.circuitOpenedAt = 0;
+          // No `allTimeouts` / `hadHttpResponse` bookkeeping: this branch breaks
+          // out of the retry loop, and both are only read on the last-attempt
+          // path below, which the break skips.
+          this.armRateLimitCooldown(Date.now() + RATE_LIMIT_COOLDOWN_MS);
+          log('warn', 'Rate limited, skipping retries', {
+            data: { events: body.events.length, attempt, cooldownMs: RATE_LIMIT_COOLDOWN_MS },
+          });
+          break;
+        }
+
+        if (!(error instanceof TimeoutError)) {
+          allTimeouts = false;
+        }
+
+        if (!(error instanceof TypeError)) {
+          hadHttpResponse = true;
+        }
+
+        log(
+          isLastAttempt ? 'error' : 'warn',
+          `Send attempt ${attempt} failed${isLastAttempt ? ' (all retries exhausted)' : ', will retry'}`,
+          {
+            error,
+            data: {
+              events: body.events.length,
+              url: url.replace(/\/\/[^/]+/, '//[DOMAIN]'),
+              attempt,
+              maxAttempts: MAX_SEND_RETRIES + 1,
+            },
+          },
+        );
+
+        if (!isLastAttempt) {
+          await this.backoffDelay(attempt);
+          continue;
+        }
+
+        if (allTimeouts) {
+          log('debug', 'All retry attempts timed out, preserving batch for retry', {
+            data: { events: requestBody.events.length },
+          });
+          return false;
+        }
+
+        if (!hadHttpResponse) {
+          this.consecutiveNetworkFailures = Math.min(
+            this.consecutiveNetworkFailures + 1,
+            MAX_CONSECUTIVE_NETWORK_FAILURES,
+          );
+
+          if (this.consecutiveNetworkFailures >= MAX_CONSECUTIVE_NETWORK_FAILURES) {
+            this.circuitOpenedAt = Date.now();
+          }
+        } else {
+          this.consecutiveNetworkFailures = 0;
+          this.circuitOpenedAt = 0;
+        }
+
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  private async sendWithTimeout(url: string, payload: string): Promise<Response> {
+    const controller = new AbortController();
+    let didTimeout = false;
+
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        body: payload,
+        keepalive: true,
+        credentials: 'omit',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': TEXT_PLAIN_CONTENT_TYPE,
+        },
+      });
+
+      if (!response.ok) {
+        const isPermanentError =
+          response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429;
+
+        if (isPermanentError) {
+          throw new PermanentError(`HTTP ${response.status}: ${response.statusText}`, response.status);
+        }
+
+        if (response.status === 429) {
+          throw new RateLimitError(`HTTP 429: ${response.statusText}`);
+        }
+
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return response;
+    } catch (error) {
+      if (error instanceof PermanentError) {
+        throw error;
+      }
+      if (didTimeout) {
+        throw new TimeoutError('Request timed out');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  private sendQueueSyncInternal(body: EventsQueue): boolean {
+    const stableBody = this.ensureBatchMetadata(body);
+    const requestBody = this.ensureBatchMetadata(stableBody, stableBody._metadata?.idempotency_token);
+    const { url, payload } = this.prepareRequest(requestBody);
+
+    if (payload.length > MAX_BEACON_PAYLOAD_SIZE) {
+      log('warn', 'Payload exceeds sendBeacon limit, persisting for recovery', {
+        data: { size: payload.length, limit: MAX_BEACON_PAYLOAD_SIZE, events: requestBody.events.length },
+      });
+      this.persistEvents(stableBody);
+      return false;
+    }
+
+    const blob = new Blob([payload], { type: TEXT_PLAIN_CONTENT_TYPE });
+
+    if (!this.isSendBeaconAvailable()) {
+      log('warn', 'sendBeacon not available, persisting events for recovery');
+      this.persistEvents(stableBody);
+      return false;
+    }
+
+    const accepted = navigator.sendBeacon(url, blob);
+
+    if (!accepted) {
+      log('warn', 'sendBeacon rejected request, persisting events for recovery');
+      this.persistEvents(stableBody);
+    }
+
+    return accepted;
+  }
+
+  private prepareRequest(body: EventsQueue): { url: string; payload: string } {
+    let timestamp = Date.now();
+
+    if (timestamp < this.lastMetadataTimestamp) {
+      timestamp = this.lastMetadataTimestamp;
+    }
+    this.lastMetadataTimestamp = timestamp;
+
+    const enrichedBody = {
+      ...body,
+      _metadata: {
+        ...body._metadata,
+        idempotency_token: body._metadata?.idempotency_token ?? this.computeContentToken(body),
+        referer:
+          typeof window !== 'undefined'
+            ? normalizeUrl(window.location.href, this.get('config')?.sensitiveQueryParams ?? [])
+            : undefined,
+        timestamp,
+        client_version: LIB_VERSION,
+      },
+    };
+
+    return {
+      url: this.apiUrl,
+      payload: JSON.stringify(enrichedBody),
+    };
+  }
+
+  private ensureBatchMetadata(body: EventsQueue, preferredToken?: string): EventsQueue {
+    const idempotencyToken = body._metadata?.idempotency_token ?? preferredToken ?? this.computeContentToken(body);
+
+    if (body._metadata?.idempotency_token === idempotencyToken) {
+      return body;
+    }
+
+    return {
+      ...body,
+      _metadata: {
+        ...body._metadata,
+        idempotency_token: idempotencyToken,
+      },
+    };
+  }
+
+  /**
+   * Deterministic 32-bit FNV-1a hash of sorted event IDs, salted with
+   * `user_id` and `session_id`. Produces the same idempotency token for the
+   * same set of events across retries.
+   */
+  private computeContentToken(body: EventsQueue): string {
+    const ids = body.events
+      .map((e) => e.id)
+      .sort()
+      .join(',');
+    const input = `${body.user_id}|${body.session_id}|${ids}`;
+
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+
+    return hash.toString(16).padStart(8, '0');
+  }
+
+  private getPersistedData(): PersistedEventsQueue | null {
+    try {
+      const storageKey = this.getQueueStorageKey();
+      const persistedDataString = this.storeManager.getItem(storageKey);
+
+      if (persistedDataString) {
+        return JSON.parse(persistedDataString);
+      }
+    } catch (error) {
+      log('debug', 'Failed to parse persisted data', { error });
+      this.clearPersistedEvents();
+    }
+
+    return null;
+  }
+
+  private isDataRecent(data: PersistedEventsQueue): boolean {
+    if (!data.timestamp || typeof data.timestamp !== 'number') {
+      return false;
+    }
+
+    const ageInHours = (Date.now() - data.timestamp) / (1000 * 60 * 60);
+    return ageInHours < EVENT_EXPIRY_HOURS;
+  }
+
+  private createRecoveryBody(data: PersistedEventsQueue): EventsQueue {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { timestamp, recoveryFailures, ...queue } = data;
+    const originalEvents = queue.events ?? [];
+    const cutoff = Date.now() - MAX_EVENT_AGE_MS_ON_RECOVERY;
+    const filteredEvents = originalEvents.filter((event) => {
+      const eventTimestamp =
+        typeof event.timestamp === 'number' ? event.timestamp : new Date(event.timestamp).getTime();
+      return Number.isFinite(eventTimestamp) && eventTimestamp >= cutoff;
+    });
+
+    if (filteredEvents.length < originalEvents.length) {
+      log('debug', 'Recovery dropped stale events', {
+        data: {
+          dropped: originalEvents.length - filteredEvents.length,
+          kept: filteredEvents.length,
+        },
+      });
+    }
+
+    return { ...queue, events: filteredEvents };
+  }
+
+  private persistEvents(body: EventsQueue): boolean {
+    const existing = this.getPersistedData();
+    const existingFailures =
+      typeof existing?.recoveryFailures === 'number' && Number.isFinite(existing.recoveryFailures)
+        ? existing.recoveryFailures
+        : 0;
+    return this.persistEventsWithFailureCount(body, existingFailures);
+  }
+
+  private persistEventsWithFailureCount(body: EventsQueue, recoveryFailures: number, skipThrottle = false): boolean {
+    try {
+      const existing = this.getPersistedData();
+
+      if (!skipThrottle && typeof existing?.timestamp === 'number') {
+        const timeSinceExisting = Date.now() - existing.timestamp;
+
+        if (timeSinceExisting < PERSISTENCE_THROTTLE_MS) {
+          log('debug', 'Skipping persistence, another tab recently persisted events', {
+            data: { timeSinceExisting },
+          });
+          return true;
+        }
+      }
+
+      const persistedData: PersistedEventsQueue = {
+        ...body,
+        timestamp: Date.now(),
+        ...(recoveryFailures > 0 && { recoveryFailures }),
+      };
+
+      const storageKey = this.getQueueStorageKey();
+      this.storeManager.setItem(storageKey, JSON.stringify(persistedData));
+
+      return !!this.storeManager.getItem(storageKey);
+    } catch (error) {
+      log('debug', 'Failed to persist events', { error });
+      return false;
+    }
+  }
+
+  private clearPersistedEvents(): void {
+    try {
+      const key = this.getQueueStorageKey();
+      this.storeManager.removeItem(key);
+    } catch (error) {
+      log('debug', 'Failed to clear persisted events', { error });
+    }
+  }
+
+  private isSendBeaconAvailable(): boolean {
+    return typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function';
+  }
+
+  private logPermanentError(context: string, error: PermanentError): void {
+    const now = Date.now();
+    const key = String(error.statusCode ?? '');
+    const shouldLog =
+      this.lastPermanentErrorLog?.key !== key ||
+      now - this.lastPermanentErrorLog.timestamp >= PERMANENT_ERROR_LOG_THROTTLE_MS;
+
+    if (shouldLog) {
+      log('error', context, {
+        data: { status: error.statusCode, message: error.message },
+      });
+
+      this.lastPermanentErrorLog = { key, timestamp: now };
+    }
+  }
+}

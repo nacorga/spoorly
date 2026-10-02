@@ -1,0 +1,704 @@
+/**
+ * ClickHandler Tests
+ * Focus: Click event tracking with PII sanitization
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setupTestEnvironment, cleanupTestEnvironment } from '../../helpers/setup.helper';
+import { createMockElement } from '../../helpers/fixtures.helper';
+import { ClickHandler } from '../../../src/handlers/click.handler';
+import { EventManager } from '../../../src/managers/event.manager';
+import { StorageManager } from '../../../src/managers/storage.manager';
+import { EventType } from '../../../src/types/event.types';
+import type { EventData } from '../../../src/types/event.types';
+
+// Helper to get tracked event with proper typing
+function getTrackedEvent(spy: ReturnType<typeof vi.spyOn>, index = 0): EventData {
+  return spy.mock.calls[index]?.[0] as EventData;
+}
+
+// Helper to dispatch a click with valid coordinates. The handler skips clicks
+// with (0,0) coords (synthetic / programmatic), so `element.click()` doesn't
+// produce a CLICK event in jsdom.
+function dispatchClick(element: Element, x = 100, y = 100): void {
+  element.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+}
+
+describe('ClickHandler - Basic Tracking', () => {
+  let handler: ClickHandler;
+  let eventManager: EventManager;
+  let storageManager: StorageManager;
+  let trackSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    setupTestEnvironment();
+    storageManager = new StorageManager();
+    eventManager = new EventManager(storageManager, null);
+    handler = new ClickHandler(eventManager);
+    trackSpy = vi.spyOn(eventManager, 'track');
+  });
+
+  afterEach(() => {
+    handler.stopTracking();
+    cleanupTestEnvironment();
+  });
+
+  it('should start tracking on startTracking()', () => {
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+
+    handler.startTracking();
+
+    expect(addEventListenerSpy).toHaveBeenCalledWith('click', expect.any(Function), true);
+  });
+
+  it('should stop tracking on stopTracking()', () => {
+    const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+
+    handler.startTracking();
+    handler.stopTracking();
+
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('click', expect.any(Function), true);
+  });
+
+  it('should capture click events on document', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'test-btn' }, 'Click Me');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    expect(trackSpy).toHaveBeenCalled();
+    const event = getTrackedEvent(trackSpy);
+    expect(event.type).toBe(EventType.CLICK);
+
+    document.body.removeChild(button);
+  });
+
+  it('should track element tag name', () => {
+    handler.startTracking();
+
+    const anchor = createMockElement('a', { href: '#' }, 'Link');
+    document.body.appendChild(anchor);
+    dispatchClick(anchor);
+
+    expect(trackSpy).toHaveBeenCalled();
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.tag).toBe('a');
+
+    document.body.removeChild(anchor);
+  });
+
+  it('should track element id', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'my-button' }, 'Click');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.id).toBe('my-button');
+
+    document.body.removeChild(button);
+  });
+
+  it('should track element classes', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { class: 'btn btn-primary' }, 'Click');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.class).toBe('btn btn-primary');
+
+    document.body.removeChild(button);
+  });
+
+  it('should track element text content', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', {}, 'Submit Form');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text).toBe('Submit Form');
+
+    document.body.removeChild(button);
+  });
+
+  it('should track click coordinates (x, y)', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', {}, 'Click');
+    document.body.appendChild(button);
+
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      clientX: 150,
+      clientY: 250,
+    });
+    button.dispatchEvent(clickEvent);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.x).toBe(150);
+    expect(event.click_data?.y).toBe(250);
+
+    document.body.removeChild(button);
+  });
+
+  it('should use passive event listener', () => {
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+
+    handler.startTracking();
+
+    // Third parameter is 'true' for capture phase
+    expect(addEventListenerSpy).toHaveBeenCalledWith('click', expect.any(Function), true);
+  });
+});
+
+describe('ClickHandler - PII Sanitization', () => {
+  let handler: ClickHandler;
+  let eventManager: EventManager;
+  let storageManager: StorageManager;
+  let trackSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    setupTestEnvironment();
+    storageManager = new StorageManager();
+    eventManager = new EventManager(storageManager, null);
+    handler = new ClickHandler(eventManager);
+    trackSpy = vi.spyOn(eventManager, 'track');
+  });
+
+  afterEach(() => {
+    handler.stopTracking();
+    cleanupTestEnvironment();
+  });
+
+  it('should NOT capture input values', () => {
+    handler.startTracking();
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = 'sensitive-data@example.com';
+    document.body.appendChild(input);
+    dispatchClick(input);
+
+    const event = getTrackedEvent(trackSpy);
+    // Input values should not appear in text (text should be empty or undefined)
+    expect(event.click_data?.text || '').not.toContain('sensitive-data');
+
+    document.body.removeChild(input);
+  });
+
+  it('should NOT capture textarea values', () => {
+    handler.startTracking();
+
+    const textarea = document.createElement('textarea');
+    textarea.value = 'Secret message with user@example.com';
+    document.body.appendChild(textarea);
+    dispatchClick(textarea);
+
+    const event = getTrackedEvent(trackSpy);
+    // Textarea values should not appear in text (text should be empty or undefined)
+    expect(event.click_data?.text || '').not.toContain('Secret message');
+
+    document.body.removeChild(textarea);
+  });
+
+  it('should NOT capture select values', () => {
+    handler.startTracking();
+
+    const select = document.createElement('select');
+    const option = document.createElement('option');
+    option.value = 'sensitive-value';
+    option.textContent = 'Sensitive Option';
+    select.appendChild(option);
+    document.body.appendChild(select);
+    dispatchClick(select);
+
+    // Select element should be tracked, but not show option values in a sensitive way
+    expect(trackSpy).toHaveBeenCalled();
+
+    document.body.removeChild(select);
+  });
+
+  it('should sanitize emails from text', () => {
+    handler.startTracking();
+
+    const div = createMockElement('div', {}, 'Contact: user@example.com for help');
+    document.body.appendChild(div);
+    dispatchClick(div);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text).toContain('[REDACTED]');
+    expect(event.click_data?.text).not.toContain('user@example.com');
+
+    document.body.removeChild(div);
+  });
+
+  it('should sanitize phone numbers from text', () => {
+    handler.startTracking();
+
+    const div = createMockElement('div', {}, 'Call: 555-123-4567');
+    document.body.appendChild(div);
+    dispatchClick(div);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text).toContain('[REDACTED]');
+    expect(event.click_data?.text).not.toContain('555-123-4567');
+
+    document.body.removeChild(div);
+  });
+
+  it('should sanitize credit cards from text', () => {
+    handler.startTracking();
+
+    const div = createMockElement('div', {}, 'Card: 4532-1234-5678-9010');
+    document.body.appendChild(div);
+    dispatchClick(div);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text).toContain('[REDACTED]');
+    expect(event.click_data?.text).not.toContain('4532-1234-5678-9010');
+
+    document.body.removeChild(div);
+  });
+
+  it('should respect data-spoorly-ignore attribute', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { 'data-spoorly-ignore': 'true' }, 'Ignored Button');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    // Should not track ignored element
+    expect(trackSpy).not.toHaveBeenCalled();
+
+    document.body.removeChild(button);
+  });
+
+  it('should ignore clicks on ignored elements', () => {
+    handler.startTracking();
+
+    const container = createMockElement('div', { 'data-spoorly-ignore': 'true' });
+    const button = createMockElement('button', {}, 'Child Button');
+    container.appendChild(button);
+    document.body.appendChild(container);
+
+    dispatchClick(button);
+
+    // Should not track children of ignored elements
+    expect(trackSpy).not.toHaveBeenCalled();
+
+    document.body.removeChild(container);
+  });
+});
+
+describe('ClickHandler - Form Control Text', () => {
+  let handler: ClickHandler;
+  let eventManager: EventManager;
+  let storageManager: StorageManager;
+  let trackSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    setupTestEnvironment();
+    storageManager = new StorageManager();
+    eventManager = new EventManager(storageManager, null);
+    handler = new ClickHandler(eventManager);
+    trackSpy = vi.spyOn(eventManager, 'track');
+    handler.startTracking();
+  });
+
+  afterEach(() => {
+    handler.stopTracking();
+    cleanupTestEnvironment();
+  });
+
+  it('reports no text for a prefilled textarea', () => {
+    const textarea = document.createElement('textarea');
+    textarea.textContent = 'Prefilled note for jane';
+    document.body.appendChild(textarea);
+    dispatchClick(textarea);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.tag).toBe('textarea');
+    expect(event.click_data?.text).toBeUndefined();
+  });
+
+  it('reports no text for a select', () => {
+    const select = document.createElement('select');
+    ['Visa ending 4242', 'Mastercard ending 4444'].forEach((label) => {
+      const option = document.createElement('option');
+      option.textContent = label;
+      select.appendChild(option);
+    });
+    document.body.appendChild(select);
+    dispatchClick(select);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.tag).toBe('select');
+    expect(event.click_data?.text).toBeUndefined();
+  });
+
+  it('reports no text for a textarea nested inside an interactive parent', () => {
+    const link = document.createElement('a');
+    link.href = '/notes';
+    const textarea = document.createElement('textarea');
+    textarea.textContent = 'Prefilled note for jane';
+    link.appendChild(textarea);
+    document.body.appendChild(link);
+    dispatchClick(textarea);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.tag).toBe('a');
+    expect(event.click_data?.text).toBeUndefined();
+  });
+
+  it('keeps the parent label but drops form control text when clicking the parent', () => {
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('role', 'button');
+    wrapper.append('Choose card ');
+    const select = document.createElement('select');
+    const option = document.createElement('option');
+    option.textContent = 'Visa ending 4242';
+    select.appendChild(option);
+    wrapper.appendChild(select);
+    document.body.appendChild(wrapper);
+    dispatchClick(wrapper);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text).toBe('Choose card');
+  });
+  it('keeps the span text but drops option labels when clicking a span inside a button with a select', () => {
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('role', 'button');
+    const span = document.createElement('span');
+    span.textContent = 'Pay now';
+    const select = document.createElement('select');
+    const option = document.createElement('option');
+    option.textContent = 'Visa ending 4242';
+    select.appendChild(option);
+    wrapper.append(span, select);
+    document.body.appendChild(wrapper);
+    dispatchClick(span);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text).toBe('Pay now');
+    expect(event.click_data?.text).not.toContain('Visa');
+  });
+});
+
+describe('ClickHandler - href & Attribute Sanitization', () => {
+  let handler: ClickHandler;
+  let eventManager: EventManager;
+  let storageManager: StorageManager;
+  let trackSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    setupTestEnvironment();
+    storageManager = new StorageManager();
+    eventManager = new EventManager(storageManager, null);
+    handler = new ClickHandler(eventManager);
+    trackSpy = vi.spyOn(eventManager, 'track');
+  });
+
+  afterEach(() => {
+    handler.stopTracking();
+    cleanupTestEnvironment();
+  });
+
+  it('should strip sensitive query params from absolute hrefs', () => {
+    handler.startTracking();
+
+    const anchor = createMockElement('a', { href: 'https://example.com/reset?token=secret123&foo=1' }, 'Reset');
+    document.body.appendChild(anchor);
+    dispatchClick(anchor);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.href).toBe('https://example.com/reset?foo=1');
+    expect(event.click_data?.href).not.toContain('secret123');
+
+    document.body.removeChild(anchor);
+  });
+
+  it('should strip sensitive query params from relative hrefs', () => {
+    handler.startTracking();
+
+    const anchor = createMockElement('a', { href: '/reset-password?token=secret123' }, 'Reset');
+    document.body.appendChild(anchor);
+    dispatchClick(anchor);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.href).toBe('/reset-password');
+
+    document.body.removeChild(anchor);
+  });
+
+  it('should keep non-sensitive hrefs untouched', () => {
+    handler.startTracking();
+
+    const anchor = createMockElement('a', { href: '/products?category=shoes' }, 'Shoes');
+    document.body.appendChild(anchor);
+    dispatchClick(anchor);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.href).toBe('/products?category=shoes');
+
+    document.body.removeChild(anchor);
+  });
+
+  it('should sanitize PII in element id', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'row-user@example.com' }, 'Open');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.id).toContain('[REDACTED]');
+    expect(event.click_data?.id).not.toContain('user@example.com');
+
+    document.body.removeChild(button);
+  });
+
+  it('should sanitize PII in element class', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { class: 'btn js-user@example.com' }, 'Open');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.class).toContain('[REDACTED]');
+    expect(event.click_data?.class).not.toContain('user@example.com');
+
+    document.body.removeChild(button);
+  });
+});
+
+describe('ClickHandler - Element Data Capture', () => {
+  let handler: ClickHandler;
+  let eventManager: EventManager;
+  let storageManager: StorageManager;
+  let trackSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    setupTestEnvironment();
+    storageManager = new StorageManager();
+    eventManager = new EventManager(storageManager, null);
+    handler = new ClickHandler(eventManager);
+    trackSpy = vi.spyOn(eventManager, 'track');
+  });
+
+  afterEach(() => {
+    handler.stopTracking();
+    cleanupTestEnvironment();
+  });
+
+  it('should capture up to 3 CSS classes', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { class: 'btn btn-primary btn-lg' }, 'Click');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.class).toBe('btn btn-primary btn-lg');
+
+    document.body.removeChild(button);
+  });
+
+  it('should truncate long text content', () => {
+    handler.startTracking();
+
+    const longText = 'a'.repeat(300); // Longer than MAX_TEXT_LENGTH (255)
+    const div = createMockElement('div', {}, longText);
+    document.body.appendChild(div);
+    dispatchClick(div);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text?.length).toBeLessThanOrEqual(255);
+    expect(event.click_data?.text).toContain('...');
+
+    document.body.removeChild(div);
+  });
+
+  it('should handle elements without id', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', {}, 'No ID');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.id).toBeUndefined();
+    expect(event.click_data?.tag).toBe('button');
+
+    document.body.removeChild(button);
+  });
+
+  it('should handle elements without classes', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'test' }, 'No Class');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.class).toBeUndefined();
+    expect(event.click_data?.tag).toBe('button');
+
+    document.body.removeChild(button);
+  });
+
+  it('should handle elements without text', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'icon-btn' }, '');
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.text).toBeFalsy();
+    expect(event.click_data?.tag).toBe('button');
+
+    document.body.removeChild(button);
+  });
+
+  it('should traverse up to find meaningful element', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'parent-btn' });
+    const span = createMockElement('span', {}, 'Click Me');
+    button.appendChild(span);
+    document.body.appendChild(button);
+
+    dispatchClick(span);
+
+    const event = getTrackedEvent(trackSpy);
+    // Should find the button as the interactive element
+    expect(event.click_data?.tag).toBe('button');
+
+    document.body.removeChild(button);
+  });
+});
+
+describe('ClickHandler - Edge Cases', () => {
+  let handler: ClickHandler;
+  let eventManager: EventManager;
+  let storageManager: StorageManager;
+  let trackSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    setupTestEnvironment();
+    storageManager = new StorageManager();
+    eventManager = new EventManager(storageManager, null);
+    handler = new ClickHandler(eventManager);
+    trackSpy = vi.spyOn(eventManager, 'track');
+  });
+
+  afterEach(() => {
+    handler.stopTracking();
+    cleanupTestEnvironment();
+  });
+
+  it('should handle clicks on document', () => {
+    handler.startTracking();
+
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      clientX: 100,
+      clientY: 200,
+    });
+    document.dispatchEvent(clickEvent);
+
+    // Should handle gracefully (may or may not track depending on target)
+    // The important thing is it doesn't throw an error
+    expect(() => document.dispatchEvent(clickEvent)).not.toThrow();
+  });
+
+  it('should handle clicks on window', () => {
+    handler.startTracking();
+
+    const clickEvent = new MouseEvent('click', {
+      bubbles: true,
+      clientX: 100,
+      clientY: 200,
+    });
+
+    // Should handle gracefully without throwing
+    expect(() => window.dispatchEvent(clickEvent)).not.toThrow();
+  });
+
+  it('should handle clicks on null target', () => {
+    handler.startTracking();
+
+    // Create event with no target
+    const clickEvent = new MouseEvent('click', { bubbles: true });
+
+    expect(() => document.dispatchEvent(clickEvent)).not.toThrow();
+  });
+
+  it('should handle rapid clicks', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'rapid-btn' }, 'Click');
+    document.body.appendChild(button);
+
+    // Click multiple times rapidly
+    dispatchClick(button);
+    dispatchClick(button);
+    dispatchClick(button);
+
+    // Should track all clicks (though some may be throttled)
+    expect(trackSpy).toHaveBeenCalled();
+
+    document.body.removeChild(button);
+  });
+
+  it('should handle clicks on dynamically added elements', () => {
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'dynamic-btn' }, 'Dynamic');
+
+    // Add element after handler is tracking
+    document.body.appendChild(button);
+    dispatchClick(button);
+
+    expect(trackSpy).toHaveBeenCalled();
+    const event = getTrackedEvent(trackSpy);
+    expect(event.click_data?.tag).toBe('button');
+
+    document.body.removeChild(button);
+  });
+
+  it('should debounce duplicate clicks', () => {
+    const dateSpy = vi.spyOn(Date, 'now');
+    let mockTime = 1000;
+    dateSpy.mockImplementation(() => mockTime);
+
+    handler.startTracking();
+
+    const button = createMockElement('button', { id: 'debounce-btn' }, 'Click');
+    document.body.appendChild(button);
+
+    // First click should be tracked
+    dispatchClick(button);
+    expect(trackSpy).toHaveBeenCalledTimes(1);
+
+    // Immediate second click should be throttled (within 300ms default)
+    mockTime += 100; // Only 100ms later
+    dispatchClick(button);
+    expect(trackSpy).toHaveBeenCalledTimes(1); // Still 1, throttled
+
+    // After throttle period, should track again
+    mockTime += 300; // Total 400ms later
+    dispatchClick(button);
+    expect(trackSpy).toHaveBeenCalledTimes(2);
+
+    document.body.removeChild(button);
+    dateSpy.mockRestore();
+  });
+});

@@ -1,0 +1,417 @@
+import {
+  HTML_DATA_ATTR_PREFIX,
+  MAX_TEXT_LENGTH,
+  INTERACTIVE_SELECTORS,
+  DEFAULT_CLICK_THROTTLE_MS,
+  MAX_THROTTLE_CACHE_ENTRIES,
+  THROTTLE_ENTRY_TTL_MS,
+  THROTTLE_PRUNE_INTERVAL_MS,
+} from '../constants';
+import { ClickCoordinates, ClickData, ClickTrackingElementData, EventType } from '../types';
+import { EventManager } from '../managers/event.manager';
+import { StateManager } from '../managers/state.manager';
+import { log, normalizeUrl, sanitizePii } from '../utils';
+
+const FORM_CONTROL_SELECTOR = 'input, textarea, select';
+
+/**
+ * Captures mouse clicks and converts them into analytics events with element context and coordinates.
+ *
+ * **Features**:
+ * - Smart element detection via INTERACTIVE_SELECTORS (29 selectors including buttons, links, form elements, ARIA roles)
+ * - Custom event tracking via `data-spoorly-name` attributes
+ * - Text extraction with length limits (255 chars max) and priority logic
+ * - PII sanitization (emails, phone numbers, credit cards, API keys, tokens)
+ * - Privacy controls via `data-spoorly-ignore` attribute
+ * - Per-element click throttling (default 300ms) with memory management (TTL + LRU)
+ *
+ * **Events Generated**: `click`, `custom` (for elements with data-spoorly-name)
+ *
+ * **Triggers**: Capture-phase click events on document
+ *
+ * **Memory Management**:
+ * - TTL-based pruning: 5-minute TTL with automatic cleanup
+ * - LRU eviction: Maintains maximum 1000 throttle entries
+ * - Rate-limited pruning: Runs every 30 seconds
+ *
+ * @example
+ * ```typescript
+ * const handler = new ClickHandler(eventManager);
+ * handler.startTracking();
+ * // Clicks are now tracked automatically
+ * handler.stopTracking();
+ * ```
+ */
+export class ClickHandler extends StateManager {
+  private readonly eventManager: EventManager;
+  private readonly lastClickTimes: Map<string, number> = new Map();
+  private clickHandler?: (event: Event) => void;
+  private lastPruneTime = 0;
+
+  constructor(eventManager: EventManager) {
+    super();
+
+    this.eventManager = eventManager;
+  }
+
+  /**
+   * Starts tracking click events on the document.
+   *
+   * Attaches a single capture-phase click listener to window that:
+   * - Detects interactive elements or falls back to clicked element
+   * - Applies click throttling per element (configurable, default 300ms)
+   * - Extracts custom tracking data from data-spoorly-name attributes
+   * - Generates both custom events (for tracked elements) and click events
+   * - Respects data-spoorly-ignore privacy controls
+   * - Sanitizes text content for PII protection
+   *
+   * Idempotent: Safe to call multiple times (early return if already tracking).
+   */
+  startTracking(): void {
+    if (this.clickHandler) {
+      return;
+    }
+
+    this.clickHandler = (event: Event): void => {
+      const mouseEvent = event as MouseEvent;
+      const target = mouseEvent.target;
+      const clickedElement =
+        typeof HTMLElement !== 'undefined' && target instanceof HTMLElement
+          ? target
+          : typeof HTMLElement !== 'undefined' && target instanceof Node && target.parentElement instanceof HTMLElement
+            ? target.parentElement
+            : null;
+
+      if (!clickedElement) {
+        log('debug', 'Click target not found or not an element');
+        return;
+      }
+
+      if (this.shouldIgnoreElement(clickedElement)) {
+        return;
+      }
+
+      // Throttle clicks per element to prevent double-clicks and spam
+      const clickThrottleMs = this.get('config')?.clickThrottleMs ?? DEFAULT_CLICK_THROTTLE_MS;
+      if (clickThrottleMs > 0 && !this.checkClickThrottle(clickedElement, clickThrottleMs)) {
+        return;
+      }
+
+      const trackingElement = this.findTrackingElement(clickedElement);
+      const relevantClickElement = this.getRelevantClickElement(clickedElement);
+      const coordinates = this.calculateClickCoordinates(mouseEvent);
+
+      // Order matters: the `data-spoorly-name` CUSTOM event runs BEFORE the
+      // synthetic-coordinate guard below, so a programmatic `element.click()`
+      // on a tracked element still fires its explicit opt-in custom event. The
+      // implicit CLICK event is suppressed only for synthetic clicks to avoid
+      // polluting heatmaps with `(0, 0)` coordinates.
+      if (trackingElement) {
+        const trackingData = this.extractTrackingData(trackingElement);
+
+        if (trackingData) {
+          const attributeData = this.createCustomEventData(trackingData);
+
+          this.eventManager.track({
+            type: EventType.CUSTOM,
+            custom_event: {
+              name: attributeData.name,
+              ...(attributeData.value && { metadata: { value: attributeData.value } }),
+            },
+          });
+        }
+      }
+
+      if (!coordinates) {
+        log('debug', 'Click skipped: invalid coordinates (likely synthetic)');
+        return;
+      }
+
+      const clickData = this.generateClickData(clickedElement, relevantClickElement, coordinates);
+
+      this.eventManager.track({
+        type: EventType.CLICK,
+        click_data: clickData,
+      });
+    };
+
+    window.addEventListener('click', this.clickHandler, true);
+  }
+
+  /**
+   * Stops tracking click events and cleans up resources.
+   *
+   * Removes the click event listener, clears throttle cache, and resets prune timer.
+   * Prevents memory leaks by properly cleaning up all state.
+   */
+  stopTracking(): void {
+    if (this.clickHandler) {
+      window.removeEventListener('click', this.clickHandler, true);
+      this.clickHandler = undefined;
+    }
+    this.lastClickTimes.clear();
+    this.lastPruneTime = 0;
+  }
+
+  private shouldIgnoreElement(element: HTMLElement): boolean {
+    if (element.hasAttribute(`${HTML_DATA_ATTR_PREFIX}-ignore`)) {
+      return true;
+    }
+
+    const parent = element.closest(`[${HTML_DATA_ATTR_PREFIX}-ignore]`);
+
+    return parent !== null;
+  }
+
+  /**
+   * Checks per-element click throttling to prevent double-clicks and rapid spam
+   * Returns true if the click should be tracked, false if throttled
+   */
+  private checkClickThrottle(element: HTMLElement, throttleMs: number): boolean {
+    const signature = this.getElementSignature(element);
+    const now = Date.now();
+
+    this.pruneThrottleCache(now);
+
+    const lastClickTime = this.lastClickTimes.get(signature);
+
+    if (lastClickTime !== undefined && now - lastClickTime < throttleMs) {
+      log('debug', 'ClickHandler: Click suppressed by throttle', {
+        data: {
+          signature,
+          throttleRemaining: throttleMs - (now - lastClickTime),
+        },
+      });
+      return false;
+    }
+
+    this.lastClickTimes.set(signature, now);
+    return true;
+  }
+
+  /**
+   * Prunes stale entries from the throttle cache to prevent memory leaks
+   * Uses TTL-based eviction (5 minutes) and enforces max size limit
+   * Called during checkClickThrottle with built-in rate limiting (every 30 seconds)
+   */
+  private pruneThrottleCache(now: number): void {
+    if (now - this.lastPruneTime < THROTTLE_PRUNE_INTERVAL_MS) {
+      return;
+    }
+
+    this.lastPruneTime = now;
+    const cutoff = now - THROTTLE_ENTRY_TTL_MS;
+
+    for (const [key, timestamp] of this.lastClickTimes.entries()) {
+      if (timestamp < cutoff) {
+        this.lastClickTimes.delete(key);
+      }
+    }
+
+    if (this.lastClickTimes.size > MAX_THROTTLE_CACHE_ENTRIES) {
+      const entries = Array.from(this.lastClickTimes.entries()).sort((a, b) => a[1] - b[1]);
+
+      const excessCount = this.lastClickTimes.size - MAX_THROTTLE_CACHE_ENTRIES;
+      const toDelete = entries.slice(0, excessCount);
+
+      for (const [key] of toDelete) {
+        this.lastClickTimes.delete(key);
+      }
+
+      log('debug', 'ClickHandler: Pruned throttle cache', {
+        data: {
+          removed: toDelete.length,
+          remaining: this.lastClickTimes.size,
+        },
+      });
+    }
+  }
+
+  /**
+   * Creates a stable signature for an element to track throttling
+   * Priority: id > data-testid > data-spoorly-name > DOM path
+   */
+  private getElementSignature(element: HTMLElement): string {
+    if (element.id) {
+      return `#${element.id}`;
+    }
+
+    const testId = element.getAttribute('data-testid');
+    if (testId) {
+      return `[data-testid="${testId}"]`;
+    }
+
+    const spoorlyName = element.getAttribute(`${HTML_DATA_ATTR_PREFIX}-name`);
+    if (spoorlyName) {
+      return `[${HTML_DATA_ATTR_PREFIX}-name="${spoorlyName}"]`;
+    }
+
+    return this.getElementPath(element);
+  }
+
+  /**
+   * Generates a DOM path for an element (e.g., "body>div>button")
+   */
+  private getElementPath(element: HTMLElement): string {
+    const path: string[] = [];
+    let current: HTMLElement | null = element;
+
+    while (current && current !== document.body) {
+      let selector = current.tagName.toLowerCase();
+
+      if (current.className) {
+        const firstClass = current.className.split(' ')[0];
+        if (firstClass) {
+          selector += `.${firstClass}`;
+        }
+      }
+
+      path.unshift(selector);
+      current = current.parentElement;
+    }
+
+    return path.join('>') || 'unknown';
+  }
+
+  private findTrackingElement(element: HTMLElement): HTMLElement | undefined {
+    if (element.hasAttribute(`${HTML_DATA_ATTR_PREFIX}-name`)) {
+      return element;
+    }
+
+    const closest = element.closest(`[${HTML_DATA_ATTR_PREFIX}-name]`) as HTMLElement;
+
+    return closest;
+  }
+
+  private getRelevantClickElement(element: HTMLElement): HTMLElement {
+    for (const selector of INTERACTIVE_SELECTORS) {
+      try {
+        if (element.matches(selector)) {
+          return element;
+        }
+
+        const parent = element.closest(selector) as HTMLElement;
+
+        if (parent) {
+          return parent;
+        }
+      } catch (error) {
+        log('debug', 'Invalid selector in element search', { error, data: { selector } });
+        continue;
+      }
+    }
+
+    return element;
+  }
+
+  private calculateClickCoordinates(event: MouseEvent): ClickCoordinates | null {
+    const x = event.clientX;
+    const y = event.clientY;
+
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+
+    // Reject (0, 0) only when the event was not user-generated. `element.click()`
+    // and `dispatchEvent(new MouseEvent(...))` both produce `isTrusted === false`
+    // and default coords to (0, 0). A real user clicking the top-left pixel
+    // produces `isTrusted === true`, so this preserves legitimate corner clicks
+    // while filtering programmatic noise.
+    if (x === 0 && y === 0 && !event.isTrusted) {
+      return null;
+    }
+
+    return { x, y };
+  }
+
+  private extractTrackingData(trackingElement: HTMLElement): ClickTrackingElementData | undefined {
+    const name = trackingElement.getAttribute(`${HTML_DATA_ATTR_PREFIX}-name`);
+    const value = trackingElement.getAttribute(`${HTML_DATA_ATTR_PREFIX}-value`);
+
+    if (!name) {
+      return undefined;
+    }
+
+    return {
+      element: trackingElement,
+      name,
+      ...(value && { value }),
+    };
+  }
+
+  private generateClickData(
+    clickedElement: HTMLElement,
+    relevantElement: HTMLElement,
+    coordinates: ClickCoordinates,
+  ): ClickData {
+    const { x, y } = coordinates;
+    const text = this.getRelevantText(clickedElement, relevantElement);
+    const rawHref = relevantElement.getAttribute('href');
+    // Same scrubbing as page_url: hrefs can carry tokens (magic links, OAuth redirects)
+    const href = rawHref ? normalizeUrl(rawHref, this.get('config').sensitiveQueryParams) : undefined;
+
+    return {
+      x,
+      y,
+      tag: relevantElement.tagName.toLowerCase(),
+      ...(relevantElement.id && { id: sanitizePii(relevantElement.id) }),
+      ...(relevantElement.className && { class: sanitizePii(relevantElement.className) }),
+      ...(text && { text }),
+      ...(href && { href }),
+    };
+  }
+
+  private getRelevantText(clickedElement: HTMLElement, relevantElement: HTMLElement): string {
+    // A form control's textContent is user data: a textarea's prefilled value or every option label of a select.
+    if (clickedElement.closest(FORM_CONTROL_SELECTOR)) {
+      return '';
+    }
+
+    const clickedText = this.getTextWithoutFormControls(clickedElement);
+
+    if (clickedText && clickedText.length <= MAX_TEXT_LENGTH) {
+      return sanitizePii(clickedText);
+    }
+
+    const relevantText =
+      relevantElement === clickedElement ? clickedText : this.getTextWithoutFormControls(relevantElement);
+
+    if (!relevantText) {
+      return '';
+    }
+
+    const finalText =
+      relevantText.length <= MAX_TEXT_LENGTH ? relevantText : relevantText.slice(0, MAX_TEXT_LENGTH - 3) + '...';
+
+    return sanitizePii(finalText);
+  }
+
+  /**
+   * `textContent` minus the text inside form controls. Walks the live DOM read-only
+   * (no cloning, so no custom-element constructors or image fetches run).
+   */
+  private getTextWithoutFormControls(element: HTMLElement): string {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) =>
+        node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(FORM_CONTROL_SELECTOR)
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT,
+    });
+
+    let text = '';
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += node.nodeValue ?? '';
+      }
+    }
+
+    return text.trim();
+  }
+
+  private createCustomEventData(trackingData: ClickTrackingElementData): { name: string; value?: string } {
+    return {
+      name: trackingData.name,
+      ...(trackingData.value && { value: trackingData.value }),
+    };
+  }
+}
