@@ -16,22 +16,22 @@ Vendor-neutral browser autocapture: clicks, scroll, web vitals, errors, sessions
 
 ```html
 <script
-  src="https://cdn.jsdelivr.net/npm/spoorly@0.1.0/dist/browser/spoorly.js"
+  src="https://cdn.jsdelivr.net/npm/spoorly@0.2.0/dist/browser/spoorly.js"
   data-endpoint="https://api.example.com/collect"
-  integrity="sha384-kpeeSaz/+Fjnu0wQWmqZtLsby52JT0Q5avuq/gxixGLi9TtOS38odY9qwLifkgip"
+  integrity="sha384-PuGIyaaNL7gOc9uIZJ+NtwkeMwTC9EAT8vQ/O2kg+WKBYDTBDp47HAKG9rcg7yf4"
   crossorigin="anonymous"
 ></script>
 ```
 
 When the script tag carries `data-endpoint`, the bundle calls `spoorly.init({ endpoint })` as soon as it is evaluated (classic `async` and `defer` work too). Without the attribute it only exposes `window.spoorly` and you call `init()` yourself. If the autoinit fails (for example an invalid endpoint), the error is reported once with `console.error`.
 
-The hash above is for `0.1.0`. For another version, get it from jsDelivr or compute it:
+The hash above is for `0.2.0`. For another version, get it from jsDelivr or compute it:
 
 ```bash
-curl -s https://cdn.jsdelivr.net/npm/spoorly@0.1.0/dist/browser/spoorly.js | openssl dgst -sha384 -binary | openssl base64 -A
+curl -s https://cdn.jsdelivr.net/npm/spoorly@0.2.0/dist/browser/spoorly.js | openssl dgst -sha384 -binary | openssl base64 -A
 ```
 
-Pin an exact version (`spoorly@0.1.0`) when you use `integrity`, because the hash changes with every release.
+Pin an exact version (`spoorly@0.2.0`) when you use `integrity`, because the hash changes with every release.
 
 The autoinit only exists in the IIFE bundle (`dist/browser/spoorly.js`). The ES module bundle (`dist/browser/spoorly.esm.js`) and the npm package never initialize on their own. Autoinit runs `init()` before your own code can call `on()`, so a listener added afterwards misses the initial `session_start` and `page_view`. When you consume events in the page, use a manual `init()` instead (see [Recipes](#recipes)).
 
