@@ -199,7 +199,7 @@ Open any page with `?spoorly_mode=qa` to turn it on for the tab (stored in `sess
 
 ## Types
 
-Every type is exported from the package:
+These types are exported from the package (`EventType` and `EmitterEvent` are also runtime enums):
 
 ```ts
 import type {

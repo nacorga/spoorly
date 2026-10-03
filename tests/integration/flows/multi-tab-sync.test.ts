@@ -58,7 +58,6 @@ describe('Integration: Multi-Tab Session Sync', () => {
       action: 'session_start',
       sessionId: expect.any(String),
       timestamp: expect.any(Number),
-      namespace: expect.any(String),
     });
 
     // Verify session was created locally
@@ -102,7 +101,6 @@ describe('Integration: Multi-Tab Session Sync', () => {
         action: 'session_start',
         sessionId: externalSessionId,
         timestamp: Date.now(),
-        namespace: 'custom', // Matches library default for standalone mode
       },
     });
 
@@ -154,7 +152,6 @@ describe('Integration: Multi-Tab Session Sync', () => {
         action: 'session_start',
         sessionId: `${Date.now()}-external`,
         timestamp: Date.now(),
-        namespace: 'custom', // Matches library default for standalone mode
       },
     });
 

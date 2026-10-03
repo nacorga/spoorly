@@ -11,7 +11,7 @@ import { log } from '../utils';
  * adding error recovery, state validation, and event buffer flushing.
  *
  * **Core Functionality**:
- * - Creates SessionManager with storage and event manager (keys share the fixed storage namespace)
+ * - Creates SessionManager with storage and event manager
  * - Flushes pending events after successful session initialization
  * - Automatic cleanup on initialization failures with nested try-catch
  *

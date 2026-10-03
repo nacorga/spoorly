@@ -137,7 +137,6 @@
     /<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi
   ];
   const STORAGE_BASE_KEY = "spoorly";
-  const STORAGE_NAMESPACE = "custom";
   const QA_MODE_KEY = `${STORAGE_BASE_KEY}:qa_mode`;
   const USER_ID_KEY = `${STORAGE_BASE_KEY}:uid`;
   const QA_MODE_URL_PARAM = "spoorly_mode";
@@ -145,13 +144,13 @@
   const QA_MODE_DISABLE_VALUE = "qa_off";
   const QUEUE_KEY = (id) => id ? `${STORAGE_BASE_KEY}:${id}:queue` : `${STORAGE_BASE_KEY}:queue`;
   const RATE_LIMIT_KEY = (id) => id ? `${STORAGE_BASE_KEY}:${id}:rate_limit` : `${STORAGE_BASE_KEY}:rate_limit`;
-  const SESSION_STORAGE_KEY = (id) => id ? `${STORAGE_BASE_KEY}:${id}:session` : `${STORAGE_BASE_KEY}:session`;
-  const BROADCAST_CHANNEL_NAME = (id) => `${STORAGE_BASE_KEY}:${id}:broadcast`;
+  const SESSION_STORAGE_KEY = `${STORAGE_BASE_KEY}:session`;
+  const BROADCAST_CHANNEL_NAME = `${STORAGE_BASE_KEY}:broadcast`;
   const SESSION_COUNTS_KEY = (userId, sessionId) => `${STORAGE_BASE_KEY}:${userId}:session_counts:${sessionId}`;
   const SESSION_COUNTS_EXPIRY_MS = 7 * 24 * 60 * 60 * 1e3;
   const SESSION_COUNTS_LAST_CLEANUP_KEY = `${STORAGE_BASE_KEY}:session_counts_last_cleanup`;
   const SESSION_COUNTS_CLEANUP_THROTTLE_MS = 60 * 60 * 1e3;
-  const IDENTITY_KEY = (namespace) => `${STORAGE_BASE_KEY}:${namespace}:identity`;
+  const IDENTITY_KEY = `${STORAGE_BASE_KEY}:identity`;
   const PENDING_IDENTITY_KEY = `${STORAGE_BASE_KEY}:pending_identity`;
   var DeviceType = /* @__PURE__ */ ((DeviceType2) => {
     DeviceType2["Mobile"] = "mobile";
@@ -245,13 +244,6 @@
     constructor(message, layer = "config") {
       super(message, "SAMPLING_RATE_INVALID", layer);
     }
-  }
-  class InitializationTimeoutError extends SpoorlyValidationError {
-    constructor(message, timeoutMs, layer = "runtime") {
-      super(message, "INITIALIZATION_TIMEOUT", layer);
-      this.timeoutMs = timeoutMs;
-    }
-    timeoutMs;
   }
   const CLICK_ID_PARAMS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid"];
   const getClickIds = () => {
@@ -422,13 +414,6 @@
   const MAX_ERRORS_PER_SIGNATURE_PER_PAGEVIEW = 3;
   const MAX_PAGEVIEW_SIGNATURE_KEYS = 200;
   const PERMANENT_ERROR_LOG_THROTTLE_MS = 6e4;
-  const WEB_VITALS_GOOD_THRESHOLDS = {
-    LCP: 2500,
-    FCP: 1800,
-    CLS: 0.1,
-    INP: 200,
-    TTFB: 800
-  };
   const WEB_VITALS_NEEDS_IMPROVEMENT_THRESHOLDS = {
     LCP: 2500,
     FCP: 1800,
@@ -3135,12 +3120,9 @@
         log("debug", "BroadcastChannel not supported");
         return;
       }
-      this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME(STORAGE_NAMESPACE));
+      this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
       this.broadcastChannel.onmessage = (event2) => {
-        const { action, sessionId, timestamp, namespace } = event2.data ?? {};
-        if (namespace !== STORAGE_NAMESPACE) {
-          return;
-        }
+        const { action, sessionId, timestamp } = event2.data ?? {};
         if (action === "session_start" && sessionId && typeof timestamp === "number" && timestamp > Date.now() - 5e3) {
           this.set("sessionId", sessionId);
           const stored = this.loadStoredSession();
@@ -3160,7 +3142,6 @@
       if (this.broadcastChannel && typeof this.broadcastChannel.postMessage === "function") {
         this.broadcastChannel.postMessage({
           action: "session_start",
-          namespace: STORAGE_NAMESPACE,
           sessionId,
           timestamp: Date.now()
         });
@@ -3239,7 +3220,7 @@
       this.storageManager.setSessionItem(storageKey, data);
     }
     getSessionStorageKey() {
-      return SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+      return SESSION_STORAGE_KEY;
     }
     /**
      * Starts session tracking with lifecycle management and cross-tab synchronization.
@@ -5346,7 +5327,7 @@
     /**
      * Associates the current anonymous visitor with a known user identity.
      *
-     * Identity is persisted to localStorage (namespaced) and included in every
+     * Identity is persisted to localStorage and included in every
      * subsequent batch payload so the endpoint always receives the latest identity.
      *
      * @param userId - External user identifier (email, customer_id, etc.). Trimmed; max 256 chars.
@@ -5407,11 +5388,11 @@
       log("debug", "Identity reset, new UUID generated");
     }
     /**
-     * Persists identity to localStorage under the namespaced key.
+     * Persists identity to localStorage under `spoorly:identity`.
      */
     persistIdentity(identity) {
       try {
-        const key = IDENTITY_KEY(STORAGE_NAMESPACE);
+        const key = IDENTITY_KEY;
         this.managers.storage.setItem(key, JSON.stringify(identity));
       } catch {
         log("debug", "Failed to persist identity to localStorage");
@@ -5419,11 +5400,11 @@
     }
     /**
      * Loads identity from localStorage on init.
-     * Also migrates pending identity (set before init) to the namespaced key.
+     * Also migrates pending identity (set before init) to `spoorly:identity`.
      */
     loadPersistedIdentity() {
       const storage = this.managers.storage;
-      const identityKey = IDENTITY_KEY(STORAGE_NAMESPACE);
+      const identityKey = IDENTITY_KEY;
       try {
         const pendingRaw = storage.getItem(PENDING_IDENTITY_KEY);
         if (pendingRaw) {
@@ -5436,7 +5417,7 @@
           const normalizedPending = this.normalizePersistedIdentity(pending);
           storage.setItem(identityKey, JSON.stringify(normalizedPending));
           this.set("identity", normalizedPending);
-          log("debug", "Migrated pending identity to namespaced key");
+          log("debug", "Migrated pending identity");
           return;
         }
       } catch {
@@ -5489,7 +5470,7 @@
     clearPersistedIdentity() {
       try {
         const storage = this.managers.storage;
-        storage.removeItem(IDENTITY_KEY(STORAGE_NAMESPACE));
+        storage.removeItem(IDENTITY_KEY);
         storage.removeItem(PENDING_IDENTITY_KEY);
       } catch {
         log("debug", "Failed to clear persisted identity");
@@ -6193,35 +6174,9 @@
     TestBridge,
     injectTestBridge
   }, Symbol.toStringTag, { value: "Module" }));
-  exports.AppConfigValidationError = AppConfigValidationError;
-  exports.DEFAULT_SESSION_TIMEOUT = DEFAULT_SESSION_TIMEOUT;
-  exports.DEFAULT_WEB_VITALS_MODE = DEFAULT_WEB_VITALS_MODE;
-  exports.DeviceType = DeviceType;
   exports.EmitterEvent = EmitterEvent;
-  exports.ErrorType = ErrorType;
   exports.EventType = EventType;
-  exports.InitializationTimeoutError = InitializationTimeoutError;
-  exports.MAX_ARRAY_LENGTH = MAX_ARRAY_LENGTH;
-  exports.MAX_CUSTOM_EVENT_ARRAY_SIZE = MAX_CUSTOM_EVENT_ARRAY_SIZE;
-  exports.MAX_CUSTOM_EVENT_KEYS = MAX_CUSTOM_EVENT_KEYS;
-  exports.MAX_CUSTOM_EVENT_NAME_LENGTH = MAX_CUSTOM_EVENT_NAME_LENGTH;
-  exports.MAX_CUSTOM_EVENT_STRING_SIZE = MAX_CUSTOM_EVENT_STRING_SIZE;
-  exports.MAX_NESTED_OBJECT_KEYS = MAX_NESTED_OBJECT_KEYS;
-  exports.MAX_STRING_LENGTH = MAX_STRING_LENGTH;
-  exports.MAX_STRING_LENGTH_IN_ARRAY = MAX_STRING_LENGTH_IN_ARRAY;
-  exports.Mode = Mode;
   exports.PII_PATTERNS = PII_PATTERNS;
-  exports.PermanentError = PermanentError;
-  exports.RateLimitError = RateLimitError;
-  exports.SamplingRateValidationError = SamplingRateValidationError;
-  exports.ScrollDirection = ScrollDirection;
-  exports.SessionTimeoutValidationError = SessionTimeoutValidationError;
-  exports.SpoorlyValidationError = SpoorlyValidationError;
-  exports.TimeoutError = TimeoutError;
-  exports.WEB_VITALS_GOOD_THRESHOLDS = WEB_VITALS_GOOD_THRESHOLDS;
-  exports.WEB_VITALS_NEEDS_IMPROVEMENT_THRESHOLDS = WEB_VITALS_NEEDS_IMPROVEMENT_THRESHOLDS;
-  exports.WEB_VITALS_POOR_THRESHOLDS = WEB_VITALS_POOR_THRESHOLDS;
-  exports.getWebVitalsThresholds = getWebVitalsThresholds;
   exports.spoorly = spoorly;
   Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 })(this.Spoorly = this.Spoorly || {});

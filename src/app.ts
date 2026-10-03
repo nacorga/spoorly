@@ -19,7 +19,7 @@ import {
 } from './utils';
 import { StorageManager } from './managers/storage.manager';
 import { SCROLL_DEBOUNCE_TIME_MS, SCROLL_SUPPRESS_MULTIPLIER } from './constants/config.constants';
-import { IDENTITY_KEY, PENDING_IDENTITY_KEY, STORAGE_NAMESPACE, USER_ID_KEY } from './constants/storage.constants';
+import { IDENTITY_KEY, PENDING_IDENTITY_KEY, USER_ID_KEY } from './constants/storage.constants';
 import { PerformanceHandler } from './handlers/performance.handler';
 import { ErrorHandler } from './handlers/error.handler';
 
@@ -259,7 +259,7 @@ export class App extends StateManager {
   /**
    * Associates the current anonymous visitor with a known user identity.
    *
-   * Identity is persisted to localStorage (namespaced) and included in every
+   * Identity is persisted to localStorage and included in every
    * subsequent batch payload so the endpoint always receives the latest identity.
    *
    * @param userId - External user identifier (email, customer_id, etc.). Trimmed; max 256 chars.
@@ -330,11 +330,11 @@ export class App extends StateManager {
   }
 
   /**
-   * Persists identity to localStorage under the namespaced key.
+   * Persists identity to localStorage under `spoorly:identity`.
    */
   private persistIdentity(identity: IdentifyData): void {
     try {
-      const key = IDENTITY_KEY(STORAGE_NAMESPACE);
+      const key = IDENTITY_KEY;
       (this.managers.storage as StorageManager).setItem(key, JSON.stringify(identity));
     } catch {
       log('debug', 'Failed to persist identity to localStorage');
@@ -343,11 +343,11 @@ export class App extends StateManager {
 
   /**
    * Loads identity from localStorage on init.
-   * Also migrates pending identity (set before init) to the namespaced key.
+   * Also migrates pending identity (set before init) to `spoorly:identity`.
    */
   private loadPersistedIdentity(): void {
     const storage = this.managers.storage as StorageManager;
-    const identityKey = IDENTITY_KEY(STORAGE_NAMESPACE);
+    const identityKey = IDENTITY_KEY;
 
     try {
       const pendingRaw = storage.getItem(PENDING_IDENTITY_KEY);
@@ -363,7 +363,7 @@ export class App extends StateManager {
         const normalizedPending = this.normalizePersistedIdentity(pending);
         storage.setItem(identityKey, JSON.stringify(normalizedPending));
         this.set('identity', normalizedPending);
-        log('debug', 'Migrated pending identity to namespaced key');
+        log('debug', 'Migrated pending identity');
         return;
       }
     } catch {
@@ -424,7 +424,7 @@ export class App extends StateManager {
   private clearPersistedIdentity(): void {
     try {
       const storage = this.managers.storage as StorageManager;
-      storage.removeItem(IDENTITY_KEY(STORAGE_NAMESPACE));
+      storage.removeItem(IDENTITY_KEY);
       storage.removeItem(PENDING_IDENTITY_KEY);
     } catch {
       log('debug', 'Failed to clear persisted identity');

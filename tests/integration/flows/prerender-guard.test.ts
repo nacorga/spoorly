@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { setupTestEnvironment, cleanupTestEnvironment } from '../../helpers/setup.helper';
 import { initTestBridge, destroyTestBridge, getQueueState } from '../../helpers/bridge.helper';
 import type { SpoorlyTestBridge } from '../../../src/types';
+import { SESSION_STORAGE_KEY } from '../../../src/constants/storage.constants';
 
 const setPrerendering = (value: boolean): void => {
   Object.defineProperty(document, 'prerendering', { configurable: true, writable: true, value });
@@ -34,10 +35,7 @@ const activate = (): void => {
 const countType = (bridge: SpoorlyTestBridge, type: string): number =>
   getQueueState(bridge).events.filter((e) => e.type === type).length;
 
-// Session records are persisted under a `spoorly:<namespace>:session` key (never the
-// `:cross_tab_session` key). Match the suffix so the test is independent of namespace.
-const hasPersistedSession = (): boolean =>
-  Object.keys(localStorage).some((key) => key.endsWith(':session') || key === 'spoorly:session');
+const hasPersistedSession = (): boolean => localStorage.getItem(SESSION_STORAGE_KEY) !== null;
 
 describe('Integration: Pre-render guard', () => {
   let bridge: SpoorlyTestBridge;

@@ -9,9 +9,6 @@
  */
 export const STORAGE_BASE_KEY = 'spoorly';
 
-/** Namespace segment shared by every per-instance storage key and the cross-tab channel. */
-export const STORAGE_NAMESPACE = 'custom';
-
 /**
  * Storage key for QA mode flag in sessionStorage
  * Format: 'spoorly:qa_mode'
@@ -63,22 +60,16 @@ export const RATE_LIMIT_KEY = (id: string): string =>
   id ? `${STORAGE_BASE_KEY}:${id}:rate_limit` : `${STORAGE_BASE_KEY}:rate_limit`;
 
 /**
- * Generates storage key for session data
- *
- * @param id - Storage namespace
- * @returns localStorage key for session (e.g., 'spoorly:custom:session')
+ * Storage key for session data, in localStorage with a sessionStorage mirror
+ * Format: 'spoorly:session'
  */
-export const SESSION_STORAGE_KEY = (id: string): string =>
-  id ? `${STORAGE_BASE_KEY}:${id}:session` : `${STORAGE_BASE_KEY}:session`;
+export const SESSION_STORAGE_KEY = `${STORAGE_BASE_KEY}:session`;
 
 /**
- * Generates BroadcastChannel name for cross-tab communication
- *
- * @param id - Storage namespace
- * @returns BroadcastChannel name (e.g., 'spoorly:custom:broadcast')
+ * BroadcastChannel name for cross-tab session sync
+ * Format: 'spoorly:broadcast'
  */
-export const BROADCAST_CHANNEL_NAME = (id: string): string =>
-  id ? `${STORAGE_BASE_KEY}:${id}:broadcast` : `${STORAGE_BASE_KEY}:broadcast`;
+export const BROADCAST_CHANNEL_NAME = `${STORAGE_BASE_KEY}:broadcast`;
 
 /**
  * Generates storage key for per-session event counts
@@ -136,18 +127,15 @@ export const SESSION_COUNTS_CLEANUP_THROTTLE_MS = 60 * 60 * 1000; // 1 hour
 // ============================================================
 
 /**
- * Generates storage key for visitor identity data.
- *
- * @param namespace - Storage namespace
- * @returns localStorage key for identity (e.g., 'spoorly:custom:identity')
+ * Storage key for visitor identity data
+ * Format: 'spoorly:identity'
  */
-export const IDENTITY_KEY = (namespace: string): string =>
-  namespace ? `${STORAGE_BASE_KEY}:${namespace}:identity` : `${STORAGE_BASE_KEY}:identity`;
+export const IDENTITY_KEY = `${STORAGE_BASE_KEY}:identity`;
 
 /**
  * Temporary storage key for identity set before init().
  *
  * When identify() is called before init(), identity is stored under this key
- * and moved to the namespaced key once init() runs.
+ * and moved to IDENTITY_KEY once init() runs.
  */
 export const PENDING_IDENTITY_KEY = `${STORAGE_BASE_KEY}:pending_identity`;

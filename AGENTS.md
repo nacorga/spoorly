@@ -56,7 +56,7 @@ App (orchestrator, one instance per page; src/app.ts)
     ├── ScrollHandler, PerformanceHandler (web-vitals), ErrorHandler
 ```
 
-Entry points: `src/public-api.ts` (exports `spoorly` and all types), `src/api.ts` (public functions), `src/app.ts`. Build configs: `tsup.config.ts`, `vite.config.mjs` (the IIFE footer implements the `data-endpoint` autoinit). Storage keys and constants: `src/constants/`.
+Entry points: `src/public-api.ts` (exports `spoorly`, `PII_PATTERNS` and the documented types), `src/api.ts` (public functions), `src/app.ts`. Build configs: `tsup.config.ts`, `vite.config.mjs` (the IIFE footer implements the `data-endpoint` autoinit). Storage keys and constants: `src/constants/`.
 
 State access in every component: `this.get('sessionId')`, `this.set('config', config)`, `this.getState()`.
 
@@ -98,7 +98,7 @@ Optimistic removal with `localStorage` persistence on failure. Don't change it t
 
 ### Sessions
 
-Cross-tab sync over BroadcastChannel; recovery from `localStorage` on reload, with a `sessionStorage` mirror for when `localStorage` is empty (external redirects); no duplicate `session_start` on recovery; default timeout 15 minutes. Keys use the fixed `custom` namespace (`spoorly:custom:session`).
+Cross-tab sync over BroadcastChannel; recovery from `localStorage` on reload, with a `sessionStorage` mirror for when `localStorage` is empty (external redirects); no duplicate `session_start` on recovery; default timeout 15 minutes. Session key `spoorly:session`, channel `spoorly:broadcast`.
 
 ### Limits
 

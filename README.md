@@ -231,12 +231,12 @@ What the library stores, all under keys starting with `spoorly:`:
 | Storage | Key | Contents |
 | --- | --- | --- |
 | `localStorage` | `spoorly:uid` | Random visitor UUID |
-| `localStorage` | `spoorly:custom:session` | Current session id, last activity time, and the referrer, UTM and ad click ids the session started with |
-| `localStorage` | `spoorly:custom:identity`, `spoorly:pending_identity` | Data passed to `identify()` |
+| `localStorage` | `spoorly:session` | Current session id, last activity time, and the referrer, UTM and ad click ids the session started with |
+| `localStorage` | `spoorly:identity`, `spoorly:pending_identity` | Data passed to `identify()` |
 | `localStorage` | `spoorly:{userId}:queue` | Batch waiting to be resent after a failed send |
 | `localStorage` | `spoorly:{userId}:rate_limit` | End of a 429 cooldown |
 | `localStorage` | `spoorly:{userId}:session_counts:{sessionId}`, `spoorly:session_counts_last_cleanup` | Per-session event counters (expire after 7 days) |
-| `sessionStorage` | `spoorly:custom:session` | Mirror of the session, so it survives an external redirect |
+| `sessionStorage` | `spoorly:session` | Mirror of the session, so it survives an external redirect |
 | `sessionStorage` | `spoorly:qa_mode` | QA mode flag |
 
 To remove everything after `destroy()`, delete the keys that start with `spoorly:` from both storages. To keep the library from initializing at all, set `window.__spoorlyDisabled = true` before `init()` runs.

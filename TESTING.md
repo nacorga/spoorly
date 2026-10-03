@@ -146,7 +146,7 @@ A bare `element.click()` produces an untrusted click at (0, 0), which the click 
 | No events at all | Lowercase event types; `samplingRate`/`errorSampling` not 0; listener registered before `init()` |
 | Expected event missing | Throttles (clicks 300 ms per element, page views 1 s), duplicate detection (same event within 1 s), session caps, `maxSameEventPerMinute` |
 | Queue empty after tracking | A flush already ran: in standalone mode listen to `'queue'`; with an endpoint inspect the `fetch`/`sendBeacon` mock. Persisted batches sit in `localStorage` under `spoorly:{userId}:queue` |
-| Cross-tab message ignored | Session keys and the BroadcastChannel use the `custom` namespace (`spoorly:custom:session`, `spoorly:custom:broadcast`), and messages need `action: 'session_start'` and a timestamp under 5 s old |
+| Cross-tab message ignored | The BroadcastChannel is `spoorly:broadcast`, and messages need `action: 'session_start'` and a timestamp under 5 s old |
 | State leaks between tests | `setupTestEnvironment()`/`cleanupTestEnvironment()` in every file; `destroyTestBridge()` in `afterEach` |
 | E2E bridge never appears | The page must load the dev bundle: rerun `npm run docs:setup` |
 | Flaky timing | Use the `E2E_WAIT_TIMES` constants rather than ad-hoc sleeps |

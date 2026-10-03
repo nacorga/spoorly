@@ -1,4 +1,4 @@
-import { BROADCAST_CHANNEL_NAME, DEFAULT_SESSION_TIMEOUT, SESSION_STORAGE_KEY, STORAGE_NAMESPACE } from '../constants';
+import { BROADCAST_CHANNEL_NAME, DEFAULT_SESSION_TIMEOUT, SESSION_STORAGE_KEY } from '../constants';
 import { ClickIds, EventType, UTM } from '../types';
 import { getClickIds, getExternalReferrer, getUTMParameters, isPrerendering, log } from '../utils';
 import { StateManager } from './state.manager';
@@ -114,14 +114,10 @@ export class SessionManager extends StateManager {
       return;
     }
 
-    this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME(STORAGE_NAMESPACE));
+    this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
 
     this.broadcastChannel.onmessage = (event): void => {
-      const { action, sessionId, timestamp, namespace } = event.data ?? {};
-
-      if (namespace !== STORAGE_NAMESPACE) {
-        return;
-      }
+      const { action, sessionId, timestamp } = event.data ?? {};
 
       if (action === 'session_start' && sessionId && typeof timestamp === 'number' && timestamp > Date.now() - 5000) {
         this.set('sessionId', sessionId);
@@ -151,7 +147,6 @@ export class SessionManager extends StateManager {
     if (this.broadcastChannel && typeof this.broadcastChannel.postMessage === 'function') {
       this.broadcastChannel.postMessage({
         action: 'session_start',
-        namespace: STORAGE_NAMESPACE,
         sessionId,
         timestamp: Date.now(),
       });
@@ -258,7 +253,7 @@ export class SessionManager extends StateManager {
   }
 
   private getSessionStorageKey(): string {
-    return SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    return SESSION_STORAGE_KEY;
   }
 
   /**

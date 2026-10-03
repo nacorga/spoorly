@@ -455,7 +455,6 @@ Manages user session lifecycle through delegation to `SessionManager` with robus
 
 - **Error recovery** — automatic cleanup on initialization failures via nested try/catch
 - **Event buffer flushing** — flushes pending events after successful session initialization
-- **Fixed namespace** — session keys and the cross-tab channel always use the `custom` storage namespace
 - **Idempotent operations** — safe to call `startTracking()` multiple times (returns early if active)
 - **Double-destroy protection** — safe to call `destroy()` multiple times
 - **State validation** — ignores operations on a destroyed instance
@@ -468,7 +467,7 @@ const handler = new SessionHandler(storage, eventManager);
 
 try {
   handler.startTracking();
-  // SessionManager created with namespace from config
+  // SessionManager created
   // Buffered events flushed after initialization
 } catch (error) {
   // Failed to start — handler remains in a clean state

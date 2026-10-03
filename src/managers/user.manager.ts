@@ -21,7 +21,7 @@ import { StorageManager } from './storage.manager';
  * - Automatic fallback to memory storage when localStorage unavailable
  * - Minimal dependencies and zero allocation approach
  *
- * **Storage**: `spoorly:uid` (fixed, not namespaced)
+ * **Storage**: `spoorly:uid`
  *
  * @example
  * ```typescript

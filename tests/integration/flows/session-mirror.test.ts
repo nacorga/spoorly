@@ -31,7 +31,7 @@ describe('Integration: Session Mirror', () => {
     expect(originalSessionId).toBeTruthy();
 
     // Session should be mirrored to sessionStorage automatically
-    const storageKey = SESSION_STORAGE_KEY('custom');
+    const storageKey = SESSION_STORAGE_KEY;
     expect(sessionStorage.getItem(storageKey)).toBeTruthy();
 
     // Phase 2: Simulate external redirect (destroys instance + clears localStorage)

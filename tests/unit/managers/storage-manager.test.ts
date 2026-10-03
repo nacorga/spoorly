@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setupTestEnvironment, cleanupTestEnvironment } from '../../helpers/setup.helper';
 import { StorageManager } from '../../../src/managers/storage.manager';
-import { STORAGE_BASE_KEY, STORAGE_NAMESPACE } from '../../../src/constants/storage.constants';
+import { STORAGE_BASE_KEY } from '../../../src/constants/storage.constants';
 
 describe('StorageManager - basic operations', () => {
   let storage: StorageManager;
@@ -160,8 +160,8 @@ describe('StorageManager - quota-exceeded cleanup', () => {
     localStorage.setItem(`${STORAGE_BASE_KEY}:queue`, '{"x":2}');
     localStorage.setItem(`${STORAGE_BASE_KEY}:user-1:session_counts:s1`, '{}');
     localStorage.setItem(`${STORAGE_BASE_KEY}:uid`, 'keep-uid');
-    localStorage.setItem(`${STORAGE_BASE_KEY}:${STORAGE_NAMESPACE}:session`, 'keep-session');
-    localStorage.setItem(`${STORAGE_BASE_KEY}:${STORAGE_NAMESPACE}:identity`, 'keep-identity');
+    localStorage.setItem(`${STORAGE_BASE_KEY}:session`, 'keep-session');
+    localStorage.setItem(`${STORAGE_BASE_KEY}:identity`, 'keep-identity');
     localStorage.setItem(`${STORAGE_BASE_KEY}:pending_identity`, 'keep-pending');
     localStorage.setItem(`${STORAGE_BASE_KEY}:user-1:rate_limit`, 'keep-rate-limit');
     localStorage.setItem('other_lib:queue', 'foreign');
@@ -192,8 +192,8 @@ describe('StorageManager - quota-exceeded cleanup', () => {
     expect(localStorage.getItem(`${STORAGE_BASE_KEY}:queue`)).toBeNull();
     expect(localStorage.getItem(`${STORAGE_BASE_KEY}:user-1:session_counts:s1`)).toBeNull();
     expect(localStorage.getItem(`${STORAGE_BASE_KEY}:uid`)).toBe('keep-uid');
-    expect(localStorage.getItem(`${STORAGE_BASE_KEY}:${STORAGE_NAMESPACE}:session`)).toBe('keep-session');
-    expect(localStorage.getItem(`${STORAGE_BASE_KEY}:${STORAGE_NAMESPACE}:identity`)).toBe('keep-identity');
+    expect(localStorage.getItem(`${STORAGE_BASE_KEY}:session`)).toBe('keep-session');
+    expect(localStorage.getItem(`${STORAGE_BASE_KEY}:identity`)).toBe('keep-identity');
     expect(localStorage.getItem(`${STORAGE_BASE_KEY}:pending_identity`)).toBe('keep-pending');
     expect(localStorage.getItem(`${STORAGE_BASE_KEY}:user-1:rate_limit`)).toBe('keep-rate-limit');
     expect(localStorage.getItem('other_lib:queue')).toBe('foreign');

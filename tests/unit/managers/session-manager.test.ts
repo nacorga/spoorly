@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setupTestEnvironment, cleanupTestEnvironment, advanceTimers } from '../../helpers/setup.helper';
 import { initTestBridge, destroyTestBridge, getManagers, getQueueState } from '../../helpers/bridge.helper';
 import { setupMockBroadcastChannel } from '../../helpers/mocks.helper';
-import { SESSION_STORAGE_KEY, STORAGE_NAMESPACE } from '../../../src/constants/storage.constants';
+import { SESSION_STORAGE_KEY } from '../../../src/constants/storage.constants';
 import { DEFAULT_SESSION_TIMEOUT } from '../../../src/constants/config.constants';
 import { EventManager } from '../../../src/managers/event.manager';
 
@@ -69,8 +69,7 @@ describe('SessionManager - Session Lifecycle', () => {
 
       expect(storage).toBeDefined();
 
-      const namespace = STORAGE_NAMESPACE;
-      const storageKey = SESSION_STORAGE_KEY(namespace);
+      const storageKey = SESSION_STORAGE_KEY;
       const storedSession = storage?.getItem(storageKey);
 
       expect(storedSession).toBeTruthy();
@@ -93,8 +92,7 @@ describe('SessionManager - Session Lifecycle', () => {
 
       expect(storage).toBeDefined();
 
-      const namespace = STORAGE_NAMESPACE;
-      const storageKey = SESSION_STORAGE_KEY(namespace);
+      const storageKey = SESSION_STORAGE_KEY;
       const storedSession = storage?.getItem(storageKey);
 
       expect(storedSession).toBeTruthy();
@@ -129,8 +127,7 @@ describe('SessionManager - Session Lifecycle', () => {
 
       expect(storage).toBeDefined();
 
-      const namespace = STORAGE_NAMESPACE;
-      const storageKey = SESSION_STORAGE_KEY(namespace);
+      const storageKey = SESSION_STORAGE_KEY;
 
       const initialStorage = JSON.parse(storage?.getItem(storageKey) ?? '{}');
       const initialActivity = initialStorage.lastActivity;
@@ -171,8 +168,7 @@ describe('SessionManager - Session Lifecycle', () => {
 
       expect(storage).toBeDefined();
 
-      const namespace = STORAGE_NAMESPACE;
-      const storageKey = SESSION_STORAGE_KEY(namespace);
+      const storageKey = SESSION_STORAGE_KEY;
 
       const initialStorage = JSON.parse(storage?.getItem(storageKey) ?? '{}');
       const initialActivity = initialStorage.lastActivity;
@@ -313,7 +309,7 @@ describe('SessionManager - Session Recovery', () => {
     const { storage } = getManagers(bridge1);
 
     // Get the stored session data
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     const storedData = storage?.getItem(storageKey);
 
     // Destroy bridge WITHOUT clearing storage
@@ -364,7 +360,7 @@ describe('SessionManager - Session Recovery', () => {
     const sessionId1 = bridge1.get('sessionId');
     const { storage } = getManagers(bridge1);
 
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     const storedData = storage?.getItem(storageKey);
 
     bridge1.destroy(false);
@@ -382,7 +378,7 @@ describe('SessionManager - Session Recovery', () => {
   });
 
   it('should not track SESSION_START on recovery', async () => {
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     const recoveredSessionId = `${Date.now()}-abc123xyz`;
     const trackSpy = vi.spyOn(EventManager.prototype, 'track');
 
@@ -459,14 +455,12 @@ describe('SessionManager - Cross-Tab Sync', () => {
     const channelInstance = BroadcastChannelMock.mock.results[0]?.value;
 
     const newSessionId = `${Date.now()}-abcdefghi`;
-    const namespace = STORAGE_NAMESPACE;
 
     // Simulate receiving message from primary tab
     if (channelInstance?.onmessage !== null && channelInstance?.onmessage !== undefined) {
       channelInstance.onmessage({
         data: {
           action: 'session_start',
-          namespace,
           sessionId: newSessionId,
           timestamp: Date.now(),
         },
@@ -489,14 +483,12 @@ describe('SessionManager - Cross-Tab Sync', () => {
     const channelInstance = BroadcastChannelMock.mock.results[0]?.value;
 
     const newSessionId = `${Date.now()}-xyz123abc`;
-    const namespace = STORAGE_NAMESPACE;
 
     // Simulate receiving message
     if (channelInstance?.onmessage !== null && channelInstance?.onmessage !== undefined) {
       channelInstance.onmessage({
         data: {
           action: 'session_start',
-          namespace,
           sessionId: newSessionId,
           timestamp: Date.now(),
         },
@@ -522,7 +514,7 @@ describe('SessionManager - Cross-Tab Sync', () => {
     // localStorage before broadcasting (persist precedes shareSession). The adopting tab
     // must not wipe that attribution by re-persisting with only id + timestamp.
     const newSessionId = `${Date.now()}-attribabc`;
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     localStorage.setItem(
       storageKey,
       JSON.stringify({
@@ -535,7 +527,7 @@ describe('SessionManager - Cross-Tab Sync', () => {
     );
 
     channelInstance.onmessage({
-      data: { action: 'session_start', namespace: STORAGE_NAMESPACE, sessionId: newSessionId, timestamp: Date.now() },
+      data: { action: 'session_start', sessionId: newSessionId, timestamp: Date.now() },
     });
 
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -559,14 +551,12 @@ describe('SessionManager - Cross-Tab Sync', () => {
     const channelInstance = BroadcastChannelMock.mock.results[0]?.value;
 
     const newSessionId = `${Date.now()}-newSession`;
-    const namespace = STORAGE_NAMESPACE;
 
     // Simulate receiving message
     if (channelInstance?.onmessage !== null && channelInstance?.onmessage !== undefined) {
       channelInstance.onmessage({
         data: {
           action: 'session_start',
-          namespace,
           sessionId: newSessionId,
           timestamp: Date.now(),
         },
@@ -657,8 +647,6 @@ describe('SessionManager - Edge Cases', () => {
     const BroadcastChannelMock = global.BroadcastChannel as any;
     const channelInstance = BroadcastChannelMock.mock.results[0]?.value;
 
-    const namespace = STORAGE_NAMESPACE;
-
     const sessionId1 = `${Date.now()}-session001`;
     const sessionId2 = `${Date.now() + 10}-session002`;
 
@@ -667,7 +655,6 @@ describe('SessionManager - Edge Cases', () => {
       channelInstance.onmessage({
         data: {
           action: 'session_start',
-          namespace,
           sessionId: sessionId1,
           timestamp: Date.now(),
         },
@@ -678,7 +665,6 @@ describe('SessionManager - Edge Cases', () => {
       channelInstance.onmessage({
         data: {
           action: 'session_start',
-          namespace,
           sessionId: sessionId2,
           timestamp: Date.now(),
         },
@@ -713,8 +699,7 @@ describe('SessionManager - Edge Cases', () => {
 
     expect(storage).toBeDefined();
 
-    const namespace = STORAGE_NAMESPACE;
-    const storageKey = SESSION_STORAGE_KEY(namespace);
+    const storageKey = SESSION_STORAGE_KEY;
 
     storage?.setItem(storageKey, 'corrupted-json-data');
 
@@ -806,8 +791,7 @@ describe('SessionManager - Session Renewal Mode', () => {
     expect(storage).toBeDefined();
 
     // Simulate browser suspend: manually set lastActivity to past
-    const namespace = STORAGE_NAMESPACE;
-    const storageKey = SESSION_STORAGE_KEY(namespace);
+    const storageKey = SESSION_STORAGE_KEY;
     const staleLastActivity = Date.now() - 2000; // 2 seconds ago (past timeout)
 
     storage?.setItem(
@@ -846,8 +830,7 @@ describe('SessionManager - Session Renewal Mode', () => {
     expect(storage).toBeDefined();
 
     // Set lastActivity to recent time (within timeout)
-    const namespace = STORAGE_NAMESPACE;
-    const storageKey = SESSION_STORAGE_KEY(namespace);
+    const storageKey = SESSION_STORAGE_KEY;
     const recentLastActivity = Date.now() - 1000; // 1 second ago
 
     storage?.setItem(
@@ -915,7 +898,7 @@ describe('SessionManager - Session Mirror', () => {
     const bridge = await initTestBridge();
     const sessionId = bridge.get('sessionId');
 
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     const raw = sessionStorage.getItem(storageKey);
     expect(raw).toBeTruthy();
 
@@ -948,7 +931,7 @@ describe('SessionManager - Session Mirror', () => {
     localStorage.clear();
 
     // Manually expire the session mirror in sessionStorage
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     const expiredSession = JSON.stringify({
       id: sessionId1,
       lastActivity: Date.now() - DEFAULT_SESSION_TIMEOUT - 1000,
@@ -966,7 +949,7 @@ describe('SessionManager - Session Mirror', () => {
   it('should handle corrupted sessionStorage data gracefully', async () => {
     localStorage.clear();
 
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     sessionStorage.setItem(storageKey, 'not-valid-json');
 
     const bridge = await initTestBridge();
@@ -980,7 +963,7 @@ describe('SessionManager - Session Mirror', () => {
     const sessionId1 = bridge1.get('sessionId');
     const { storage } = getManagers(bridge1);
 
-    const storageKey = SESSION_STORAGE_KEY(STORAGE_NAMESPACE);
+    const storageKey = SESSION_STORAGE_KEY;
     const storedData = storage?.getItem(storageKey);
 
     bridge1.destroy(false);

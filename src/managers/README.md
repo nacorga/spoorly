@@ -45,9 +45,9 @@ Session lifecycle, cross-tab sync and recovery.
 
 - **Lifecycle** — a session ends after `sessionTimeout` (default 15 min, 30 s to 24 h) without activity (`click`, `keydown`, `scroll`). After a timeout, the next interaction starts a new session with a new `SESSION_START`, which keeps SPAs from running without a session id.
 - **Session id** — `{timestamp}-{9 base-36 characters}`; a stored id that doesn't match the format is discarded.
-- **Storage** — `spoorly:custom:session` in `localStorage` holds the id, last activity time and the session's referrer, UTM and ad click ids. Every write is mirrored to `sessionStorage`, so when `localStorage` is empty (for example after an external redirect) the session is recovered from the mirror. The timeout still applies.
+- **Storage** — `spoorly:session` in `localStorage` holds the id, last activity time and the session's referrer, UTM and ad click ids. Every write is mirrored to `sessionStorage`, so when `localStorage` is empty (for example after an external redirect) the session is recovered from the mirror. The timeout still applies.
 - **Recovery** — a recovered session never emits `SESSION_START` again.
-- **Cross-tab sync** — a BroadcastChannel (`spoorly:custom:broadcast`) shares new sessions. Only `action: 'session_start'` messages less than 5 s old are accepted. The channel is opened before `SESSION_START` is tracked so no message is lost. Without BroadcastChannel, sessions still work per tab.
+- **Cross-tab sync** — a BroadcastChannel (`spoorly:broadcast`) shares new sessions. Only `action: 'session_start'` messages less than 5 s old are accepted. The channel is opened before `SESSION_START` is tracked so no message is lost. Without BroadcastChannel, sessions still work per tab.
 - **Visibility** — the timeout timer stops while the page is hidden; when it becomes visible again, a session whose last activity is older than the timeout is renewed.
 - **Rollback** — if `startTracking()` fails, everything it set up is undone and the error is rethrown.
 
