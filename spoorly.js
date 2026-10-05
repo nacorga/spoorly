@@ -250,7 +250,7 @@ const Ut = () => {
     default:
       return ze;
   }
-}, jt = 50, Yt = "0.2.0", qt = Yt, Jt = () => typeof window < "u" && typeof sessionStorage < "u", Zt = () => {
+}, jt = 50, Yt = "0.2.1", qt = Yt, Jt = () => typeof window < "u" && typeof sessionStorage < "u", Zt = () => {
   try {
     const n = new URLSearchParams(window.location.search);
     n.delete(st);
@@ -3244,11 +3244,20 @@ class Ds extends _ {
   currentBufferNavId = null;
   isTracking = !1;
   lifecycleListenersRegistered = !1;
+  // Set by a `pagehide` that arrived while the document was still visible.
+  pageUnloading = !1;
   pageHideHandler = () => {
+    if (typeof document < "u" && !document.hidden) {
+      this.pageUnloading = !0;
+      return;
+    }
     this.flushAndDeliver(!0);
   };
   visibilityHandler = () => {
-    typeof document < "u" && document.hidden && this.flushAndDeliver(this.get("config").flushOnPageHidden !== !1);
+    if (typeof document < "u" && document.hidden) {
+      const e = this.pageUnloading;
+      this.pageUnloading = !1, this.flushAndDeliver(e || this.get("config").flushOnPageHidden !== !1);
+    }
   };
   constructor(e) {
     super(), this.eventManager = e, this.vitalThresholds = Qe(Ee);
@@ -3280,10 +3289,12 @@ class Ds extends _ {
    * Registers the `pagehide` / `visibilitychange` listeners that flush the
    * consolidated buffer. Two properties make one honest event per navigation:
    *
-   * 1. **Registered AFTER `initWebVitals()`**, so on the same lifecycle
-   *    dispatch the `web-vitals` library's own hidden/pagehide callbacks — its
-   *    listeners were registered while the import resolved, therefore earlier —
-   *    finalize LCP/CLS/INP into the buffer BEFORE this flush reads it.
+   * 1. **Registered AFTER `initWebVitals()`**, so on the same `visibilitychange`
+   *    dispatch the `web-vitals` library's own hidden callbacks — its listeners
+   *    were registered while the import resolved, therefore earlier — finalize
+   *    LCP/CLS/INP into the buffer BEFORE this flush reads it. web-vitals does
+   *    not finalize on `pagehide`, which on unload fires first, so that earlier
+   *    `pagehide` must not flush (see `pageHideHandler`).
    *    Registering first (or in the constructor) splits every navigation into
    *    two events: the early metrics (TTFB/FCP) and the late ones. The wire
    *    payload carries no navigation id, so a receiver cannot merge that split
@@ -3314,7 +3325,7 @@ class Ds extends _ {
    * - Prevents memory leaks in long-running applications
    */
   stopTracking() {
-    this.isTracking = !1, this.lifecycleListenersRegistered = !1, this.flushConsolidatedVitals(), window.removeEventListener("pagehide", this.pageHideHandler), document.removeEventListener("visibilitychange", this.visibilityHandler), this.observers.forEach((e, t) => {
+    this.isTracking = !1, this.lifecycleListenersRegistered = !1, this.pageUnloading = !1, this.flushConsolidatedVitals(), window.removeEventListener("pagehide", this.pageHideHandler), document.removeEventListener("visibilitychange", this.visibilityHandler), this.observers.forEach((e, t) => {
       try {
         e.disconnect();
       } catch (s) {
