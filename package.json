@@ -1,6 +1,6 @@
 {
   "name": "spoorly",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Vendor-neutral browser autocapture: clicks, scroll, web vitals, errors and sessions, sent to your own endpoint or any analytics tool.",
   "keywords": [
     "analytics",
