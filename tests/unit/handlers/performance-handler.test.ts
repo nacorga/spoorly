@@ -288,12 +288,30 @@ describe('PerformanceHandler - Navigation ID & Consolidation', () => {
   });
 
   describe('lifecycle flush triggers', () => {
-    it('flushes the buffer when the pagehide handler fires', () => {
+    it('flushes the buffer when pagehide fires on an already hidden document', () => {
       sendVital('LCP', 3000);
       expect(trackSpy).not.toHaveBeenCalled();
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
 
       (handler as any).pageHideHandler();
 
+      expect(trackedVitals('LCP')).toEqual([{ type: 'LCP', value: 3000 }]);
+    });
+
+    it('defers a pagehide on a visible document to the visibilitychange that follows, so late metrics join the same event', () => {
+      sendVital('FCP', 1200);
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+
+      (handler as any).pageHideHandler();
+      expect(trackSpy).not.toHaveBeenCalled();
+
+      // web-vitals finalizes LCP on the visibilitychange, before this handler runs.
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      sendVital('LCP', 3000);
+      (handler as any).visibilityHandler();
+
+      expect(trackSpy).toHaveBeenCalledTimes(1);
+      expect(trackedVitals('FCP')).toEqual([{ type: 'FCP', value: 1200 }]);
       expect(trackedVitals('LCP')).toEqual([{ type: 'LCP', value: 3000 }]);
     });
 
@@ -405,6 +423,7 @@ describe('PerformanceHandler - Navigation ID & Consolidation', () => {
 
     it('drains the queue on pagehide, instead of relying on App draining afterwards', () => {
       sendVital('LCP', 3000);
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
 
       (handler as any).pageHideHandler();
 
@@ -439,11 +458,28 @@ describe('PerformanceHandler - Navigation ID & Consolidation', () => {
       expect(flushSyncSpy).not.toHaveBeenCalled();
     });
 
-    it('still drains on pagehide even when flushOnPageHidden is disabled', () => {
+    it('stopTracking() clears a pending unload, so a later hidden tab honours flushOnPageHidden again', () => {
+      (handler as any).set('config', { flushOnPageHidden: false });
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+      (handler as any).pageHideHandler();
+
+      handler.stopTracking();
+      sendVital('FCP', 1200);
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      (handler as any).visibilityHandler();
+
+      expect(trackedVitals('FCP')).toEqual([{ type: 'FCP', value: 1200 }]);
+      expect(flushSyncSpy).not.toHaveBeenCalled();
+    });
+
+    it('still drains on unload (pagehide, then hidden) even when flushOnPageHidden is disabled', () => {
       (handler as any).set('config', { flushOnPageHidden: false });
       sendVital('FCP', 1200);
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
 
       (handler as any).pageHideHandler();
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      (handler as any).visibilityHandler();
 
       expect(flushSyncSpy).toHaveBeenCalledTimes(1);
     });

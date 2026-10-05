@@ -40,8 +40,10 @@ type LayoutShiftEntry = PerformanceEntry & { value?: number; hadRecentInput?: bo
  * including good ones, affordable: up to 5 per-metric events collapse into 1.
  *
  * **Flush ordering**: the lifecycle listeners are registered only AFTER the
- * `web-vitals` library has registered its own, and each flush drains the event
- * queue itself. Both halves are load-bearing — see `registerLifecycleListeners`.
+ * `web-vitals` library has registered its own, a `pagehide` on a still-visible
+ * document defers to the `visibilitychange` that follows it, and each flush
+ * drains the event queue itself. All three are load-bearing — see
+ * `registerLifecycleListeners` and `pageHideHandler`.
  *
  * **Filtering Modes**:
  * - 'all': Track every measured value, including good ones (no threshold; default)
@@ -76,7 +78,22 @@ export class PerformanceHandler extends StateManager {
   private isTracking = false;
   private lifecycleListenersRegistered = false;
 
+  // Set by a `pagehide` that arrived while the document was still visible.
+  private pageUnloading = false;
+
   private readonly pageHideHandler = (): void => {
+    // Browsers fire `pagehide` BEFORE `visibilitychange` when a page unloads,
+    // and web-vitals finalizes LCP/CLS/INP on that `visibilitychange`.
+    // Flushing here would ship the early metrics and leave the late ones for a
+    // second event, so defer to the `visibilitychange` that follows.
+    // ponytail: an engine that never fires that `visibilitychange` on unload
+    // (Safari < 14.1) loses the buffered vitals of the page; covering it needs a
+    // way to tell here whether a `visibilitychange` will follow.
+    if (typeof document !== 'undefined' && !document.hidden) {
+      this.pageUnloading = true;
+      return;
+    }
+
     // Unconditional: `flushOnPageHidden` opts out of beaconing when the tab is
     // merely hidden, not when the page is being torn down. `App`'s own
     // `pagehide` drain is unconditional for the same reason.
@@ -85,7 +102,9 @@ export class PerformanceHandler extends StateManager {
 
   private readonly visibilityHandler = (): void => {
     if (typeof document !== 'undefined' && document.hidden) {
-      this.flushAndDeliver(this.get('config').flushOnPageHidden !== false);
+      const unloading = this.pageUnloading;
+      this.pageUnloading = false;
+      this.flushAndDeliver(unloading || this.get('config').flushOnPageHidden !== false);
     }
   };
 
@@ -135,10 +154,12 @@ export class PerformanceHandler extends StateManager {
    * Registers the `pagehide` / `visibilitychange` listeners that flush the
    * consolidated buffer. Two properties make one honest event per navigation:
    *
-   * 1. **Registered AFTER `initWebVitals()`**, so on the same lifecycle
-   *    dispatch the `web-vitals` library's own hidden/pagehide callbacks — its
-   *    listeners were registered while the import resolved, therefore earlier —
-   *    finalize LCP/CLS/INP into the buffer BEFORE this flush reads it.
+   * 1. **Registered AFTER `initWebVitals()`**, so on the same `visibilitychange`
+   *    dispatch the `web-vitals` library's own hidden callbacks — its listeners
+   *    were registered while the import resolved, therefore earlier — finalize
+   *    LCP/CLS/INP into the buffer BEFORE this flush reads it. web-vitals does
+   *    not finalize on `pagehide`, which on unload fires first, so that earlier
+   *    `pagehide` must not flush (see `pageHideHandler`).
    *    Registering first (or in the constructor) splits every navigation into
    *    two events: the early metrics (TTFB/FCP) and the late ones. The wire
    *    payload carries no navigation id, so a receiver cannot merge that split
@@ -179,6 +200,7 @@ export class PerformanceHandler extends StateManager {
   stopTracking(): void {
     this.isTracking = false;
     this.lifecycleListenersRegistered = false;
+    this.pageUnloading = false;
 
     this.flushConsolidatedVitals();
 

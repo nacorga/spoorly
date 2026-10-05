@@ -211,7 +211,9 @@ Configurable filtering modes still control which measured *values* are kept.
 
 - `web-vitals` library: `onLCP`, `onCLS`, `onFCP`, `onTTFB`, `onINP` (buffer measurements)
 - `pagehide` / `visibilitychange` (document hidden) — flush the buffer as one event, then deliver
-  it immediately via `sendBeacon`
+  it immediately via `sendBeacon`. On unload browsers fire `pagehide` while the page is still
+  visible and `visibilitychange` right after, so that `pagehide` defers to the `visibilitychange`,
+  which then delivers even with `flushOnPageHidden: false`
 - A navigation-boundary change (SPA route change) — flushes the previous navigation's buffer,
   since SPA route changes never fire `pagehide`. No immediate delivery: the page is not going
   away, so the normal batch interval ships it
@@ -235,8 +237,9 @@ await spoorly.init({
   capturing every value, including good ones, affordable: up to 5 per-metric events collapse
   into 1.
 - **Flush ordering** — the lifecycle listeners are registered only after the `web-vitals` library
-  has registered its own, so LCP/CLS/INP finalize into the buffer before the flush reads it: one
-  navigation ships one event, not an early-metrics event plus a late-metrics one. The flush then
+  has registered its own, so LCP/CLS/INP finalize into the buffer on `visibilitychange` before the
+  flush reads it, and the `pagehide` that precedes it on unload does not flush: one navigation ships
+  one event, not an early-metrics event plus a late-metrics one. The flush then
   drains the queue itself rather than depending on `App`'s listeners running afterwards, which
   they do not on a prerendered page (`App` defers handler startup to `prerenderingchange`).
 - **Configurable filtering modes** (via `webVitalsMode`), applied per measured value BEFORE

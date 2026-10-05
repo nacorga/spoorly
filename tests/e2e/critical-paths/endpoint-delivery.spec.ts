@@ -43,6 +43,42 @@ test.describe('Endpoint delivery to a cross-origin receiver', () => {
     expect(errors).toEqual([]);
   });
 
+  test('leaving the page delivers one web_vitals event with the metrics finalized on hide', async ({
+    page,
+    request,
+    browserName,
+  }) => {
+    const token = `vitals-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const receivedVitals = async (): Promise<{ type: string }[][]> =>
+      (
+        (await (await request.get(`${RECEIVER}/received`)).json()) as {
+          type: string;
+          page_url?: string;
+          web_vitals?: { metrics: { type: string }[] };
+        }[]
+      )
+        .filter((e) => e.type === 'web_vitals' && e.page_url?.includes(token) === true)
+        .map((e) => e.web_vitals?.metrics ?? []);
+
+    await page.goto(`/autoinit.html?run=${token}`);
+    // No interaction: LCP then only finalizes when the page is hidden, after the
+    // `pagehide` that browsers fire first on unload.
+    await page.evaluate(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    });
+    await page.goto('about:blank');
+
+    await expect.poll(receivedVitals, { timeout: 5000 }).not.toHaveLength(0);
+    // Room for a second, split event to arrive.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const vitals = await receivedVitals();
+    expect(vitals).toHaveLength(1);
+    if (browserName === 'chromium') {
+      expect(vitals[0]!.map((m) => m.type)).toContain('LCP');
+    }
+  });
+
   test('without data-endpoint the IIFE does not initialize', async ({ page }) => {
     await page.goto('/autoinit-none.html');
 
