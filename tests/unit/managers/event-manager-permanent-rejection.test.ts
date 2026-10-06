@@ -48,9 +48,7 @@ describe('EventManager - permanent rejection by the endpoint', () => {
 
     const sender = new SenderManager(storageManager, 'https://collect.example.com/collect');
     vi.spyOn(sender as unknown as { backoffDelay: () => Promise<void> }, 'backoffDelay').mockResolvedValue(undefined);
-    const senders = eventManager['dataSenders'];
-    senders.length = 0;
-    senders.push(sender);
+    (eventManager as unknown as { sender: SenderManager | null }).sender = sender;
 
     fetchMock = vi.fn<(...args: unknown[]) => Promise<unknown>>();
     (globalThis as { fetch: unknown }).fetch = fetchMock;

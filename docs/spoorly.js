@@ -447,7 +447,7 @@ const getWebVitalsThresholds = (mode = DEFAULT_WEB_VITALS_MODE) => {
   }
 };
 const MAX_NAVIGATION_HISTORY = 50;
-const version = "0.2.0";
+const version = "0.2.1";
 const LIB_VERSION = version;
 const isBrowserEnvironment = () => {
   return typeof window !== "undefined" && typeof sessionStorage !== "undefined";
@@ -1832,7 +1832,7 @@ class TimeManager extends StateManager {
 }
 const VALID_EVENT_TYPES = new Set(Object.values(EventType));
 class EventManager extends StateManager {
-  dataSenders;
+  sender = null;
   emitter;
   timeManager;
   recentEventFingerprints = /* @__PURE__ */ new Map();
@@ -1866,10 +1866,9 @@ class EventManager extends StateManager {
     super();
     this.emitter = emitter;
     this.timeManager = new TimeManager();
-    this.dataSenders = [];
     const apiUrl = this.get("apiUrl");
     if (apiUrl) {
-      this.dataSenders.push(new SenderManager(storeManager, apiUrl));
+      this.sender = new SenderManager(storeManager, apiUrl);
     }
     this.saveSessionCountsDebounced = this.debounce((sessionId) => {
       this.saveSessionCounts(sessionId);
@@ -1894,8 +1893,11 @@ class EventManager extends StateManager {
    * successful network transmission.
    */
   async recoverPersistedEvents() {
-    const recoveryPromises = this.dataSenders.map(
-      async (sender) => sender.recoverPersistedEvents({
+    if (!this.sender) {
+      return;
+    }
+    try {
+      await this.sender.recoverPersistedEvents({
         onSuccess: (_eventCount, recoveredEvents, body) => {
           if (recoveredEvents && recoveredEvents.length > 0) {
             const eventIds = recoveredEvents.map((e3) => e3.id);
@@ -1908,9 +1910,10 @@ class EventManager extends StateManager {
         onFailure: () => {
           log("debug", "Failed to recover persisted events");
         }
-      })
-    );
-    await Promise.allSettled(recoveryPromises);
+      });
+    } catch (error) {
+      log("debug", "Failed to recover persisted events", { error });
+    }
   }
   /**
    * Tracks a user interaction event and adds it to the event queue.
@@ -2161,9 +2164,7 @@ class EventManager extends StateManager {
     };
     this.lastSessionId = null;
     this.set("hasStartSession", false);
-    this.dataSenders.forEach((sender) => {
-      sender.stop();
-    });
+    this.sender?.stop();
   }
   /**
    * Flushes all events in the queue asynchronously.
@@ -2187,7 +2188,7 @@ class EventManager extends StateManager {
    * @returns Promise resolving to `true` if the endpoint accepted the batch
    *          during this call (optimistic removal — failures persist for
    *          retry). `false` if no events, all
-   *          senders failed, or a flush is already in flight.
+   *          the send failed, or a flush is already in flight.
    *
    * @example
    * ```typescript
@@ -2226,7 +2227,7 @@ class EventManager extends StateManager {
    * Mirrors `flushImmediately()`'s behaviour for the same condition.
    *
    * @returns `true` if the endpoint accepted the beacon batch
-   *          *during this call*, `false` otherwise (no events, all senders
+   *          *during this call*, `false` otherwise (no events, the send
    *          failed, or the call was deferred behind an in-flight async send)
    *
    * @example
@@ -2360,9 +2361,6 @@ class EventManager extends StateManager {
       this.sendTimeoutId = null;
     }
   }
-  isSuccessfulResult(result) {
-    return result.status === "fulfilled" && result.value === true;
-  }
   /**
    * Groups the queue by frozen `_session_id`, preserving insertion order.
    * Single pass — `buildBatchesWithIds()` builds one batch + one eventIds list
@@ -2427,7 +2425,7 @@ class EventManager extends StateManager {
     if (planned.length === 0) {
       return isSync ? true : Promise.resolve(true);
     }
-    if (this.dataSenders.length === 0) {
+    if (!this.sender) {
       for (const { batch, eventIds } of planned) {
         this.removeProcessedEvents(eventIds);
         this.emitEventsQueue(batch);
@@ -2500,9 +2498,8 @@ class EventManager extends StateManager {
    * queue and emit it locally. Failures persist for retry.
    */
   sendBatchSync(batch, eventIds) {
-    const results = this.dataSenders.map((sender) => sender.sendEventsQueueSync(batch));
-    const anySucceeded = results.some((success) => success);
-    if (anySucceeded) {
+    const sent = this.sender?.sendEventsQueueSync(batch) === true;
+    if (sent) {
       this.removeProcessedEvents(eventIds);
       this.emitEventsQueue(batch);
     } else {
@@ -2510,32 +2507,29 @@ class EventManager extends StateManager {
         data: { eventCount: eventIds.length, sessionId: batch.session_id }
       });
     }
-    return anySucceeded;
+    return sent;
   }
   /**
    * Sends one batch asynchronously (fetch path).
    */
   async sendBatchAsync(batch, eventIds) {
-    let rejectedCount = 0;
-    const sendPromises = this.dataSenders.map(
-      async (sender) => sender.sendEventsQueue(batch, {
+    if (!this.sender) {
+      return false;
+    }
+    let rejected = false;
+    let sent = false;
+    try {
+      sent = await this.sender.sendEventsQueue(batch, {
         onFailure: (permanent) => {
-          if (permanent) rejectedCount++;
+          rejected = permanent === true;
         }
-      })
-    );
-    const results = await Promise.allSettled(sendPromises);
-    const anySucceeded = results.some((result) => this.isSuccessfulResult(result));
-    if (anySucceeded) {
+      });
+    } catch {
+    }
+    if (sent) {
       this.removeProcessedEvents(eventIds);
       this.emitEventsQueue(batch);
-      const failedCount = results.filter((result) => !this.isSuccessfulResult(result)).length;
-      if (failedCount > 0) {
-        log("debug", "Async send completed with some failures, removed from queue and persisted", {
-          data: { eventCount: eventIds.length, failedCount, sessionId: batch.session_id }
-        });
-      }
-    } else if (rejectedCount === this.dataSenders.length) {
+    } else if (rejected) {
       this.removeProcessedEvents(eventIds);
       log("debug", "Batch rejected by the endpoint, events discarded", {
         data: { eventCount: eventIds.length, sessionId: batch.session_id }
@@ -2545,7 +2539,7 @@ class EventManager extends StateManager {
         data: { eventCount: eventIds.length, sessionId: batch.session_id }
       });
     }
-    return anySucceeded;
+    return sent;
   }
   async sendEventsQueue() {
     if (this.eventsQueue.length === 0 || this.sendInProgress) {
@@ -2555,7 +2549,7 @@ class EventManager extends StateManager {
     try {
       const planned = this.buildBatchesWithIds();
       if (planned.length === 0) return;
-      if (this.dataSenders.length === 0) {
+      if (!this.sender) {
         for (const { batch, eventIds } of planned) {
           this.removeProcessedEvents(eventIds);
           this.emitEventsQueue(batch);

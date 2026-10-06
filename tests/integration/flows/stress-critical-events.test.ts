@@ -13,7 +13,7 @@
  * the counter directly.
  *
  * The bridge initialises in standalone mode (no collect endpoint), so no
- * SenderManager exists. We inject a fake sender into the `dataSenders` array
+ * SenderManager exists. We inject a fake sender as the EventManager's `sender`
  * after init to exercise the coordination between EventManager and
  * SenderManager without depending on a real network endpoint.
  */
@@ -42,9 +42,7 @@ interface FakeSender {
 
 function attachFakeSender(em: ReturnType<SpoorlyTestBridge['getEventManager']>, sender: FakeSender): void {
   if (!em) return;
-  const senders = (em as unknown as { dataSenders: FakeSender[] }).dataSenders;
-  senders.length = 0;
-  senders.push(sender);
+  (em as unknown as { sender: FakeSender | null }).sender = sender;
 }
 
 describe('Integration: stress concurrency for critical events', () => {

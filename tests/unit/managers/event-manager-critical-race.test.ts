@@ -14,7 +14,6 @@ import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vite
 import { setupTestEnvironment, cleanupTestEnvironment } from '../../helpers/setup.helper';
 import { MOCK_DEVICE_INFO } from '../../helpers/fixtures.helper';
 import { EventManager } from '../../../src/managers/event.manager';
-import { SenderManager } from '../../../src/managers/sender.manager';
 import { StorageManager } from '../../../src/managers/storage.manager';
 import { EventType } from '../../../src/types';
 import type { EventsQueue } from '../../../src/types';
@@ -49,10 +48,8 @@ describe('EventManager - critical event race with in-flight async send', () => {
       stop: vi.fn<() => void>(),
     };
 
-    // Replace dataSenders with our controllable double.
-    const senders = eventManager['dataSenders'];
-    senders.length = 0;
-    senders.push(customSender as unknown as SenderManager);
+    // Replace the sender with our controllable double.
+    (eventManager as unknown as { sender: unknown }).sender = customSender;
   });
 
   afterEach(() => {
