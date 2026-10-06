@@ -1,5 +1,5 @@
 const ke = "text/plain;charset=UTF-8";
-const M = "data-spoorly", Et = [
+const M = "data-spoorly", St = [
   "button",
   "a",
   'input[type="button"]',
@@ -148,8 +148,8 @@ const Nt = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid"], le = () => {
   const { error: s, data: i, showToClient: r = !1, style: o, visibility: l } = t ?? {}, c = s ? Ct(e, s) : `[spoorly] ${e}`, d = n === "error" ? "error" : n === "warn" ? "warn" : "log";
   if (!Pt(l, r))
     return;
-  const p = kt(l, o), S = i !== void 0 ? pe(i) : void 0;
-  Dt(d, c, p, S);
+  const p = kt(l, o), E = i !== void 0 ? pe(i) : void 0;
+  Dt(d, c, p, E);
 }, Pt = (n, e) => n === "critical" ? !0 : n === "qa" || e ? Ot() : !1, kt = (n, e) => e !== void 0 && e !== "" ? e : n === "critical" ? Rt : "", Dt = (n, e, t, s) => {
   const i = t !== void 0 && t !== "", r = i ? `%c${e}` : e;
   s !== void 0 ? i ? console[n](r, t, s) : console[n](r, s) : i ? console[n](r, t) : console[n](r);
@@ -167,9 +167,9 @@ const Nt = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid"], le = () => {
   }
   return e;
 };
-let Se, nt;
+let Ee, nt;
 const Ut = () => {
-  typeof window < "u" && !Se && (Se = window.matchMedia("(pointer: coarse)"), nt = window.matchMedia("(hover: none)"));
+  typeof window < "u" && !Ee && (Ee = window.matchMedia("(pointer: coarse)"), nt = window.matchMedia("(hover: none)"));
 }, ee = "Unknown", Ft = (n) => {
   const e = n.userAgentData?.platform;
   if (e != null && e !== "") {
@@ -201,7 +201,7 @@ const Ut = () => {
       return c != null && c !== "" && /ipad|tablet/i.test(c) ? w.Tablet : n.userAgentData.mobile ? w.Mobile : w.Desktop;
     }
     Ut();
-    const e = window.innerWidth, t = Se?.matches ?? !1, s = nt?.matches ?? !1, i = "ontouchstart" in window || navigator.maxTouchPoints > 0, r = navigator.userAgent.toLowerCase(), o = /mobile|android|iphone|ipod|blackberry|iemobile|opera mini/.test(r), l = /tablet|ipad|android(?!.*mobile)/.test(r);
+    const e = window.innerWidth, t = Ee?.matches ?? !1, s = nt?.matches ?? !1, i = "ontouchstart" in window || navigator.maxTouchPoints > 0, r = navigator.userAgent.toLowerCase(), o = /mobile|android|iphone|ipod|blackberry|iemobile|opera mini/.test(r), l = /tablet|ipad|android(?!.*mobile)/.test(r);
     return e <= 767 || o && i ? w.Mobile : e >= 768 && e <= 1024 || l || t && s && i ? w.Tablet : w.Desktop;
   } catch (n) {
     return a("debug", "Device detection failed, defaulting to desktop", { error: n }), w.Desktop;
@@ -239,7 +239,7 @@ const Ut = () => {
   CLS: Number.NEGATIVE_INFINITY,
   INP: Number.NEGATIVE_INFINITY,
   TTFB: Number.NEGATIVE_INFINITY
-}, Ee = "all", Qe = (n = Ee) => {
+}, Se = "all", Qe = (n = Se) => {
   switch (n) {
     case "all":
       return ze;
@@ -750,9 +750,9 @@ class gs {
     this.listeners.clear();
   }
 }
-const ms = /https?:\/\/\S+/g, ps = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, Ss = /0x[0-9a-fA-F]{4,}/g, Es = /(?<!\d)\d{4,}(?!\d)/g, vs = /(['"])[^'"]{20,}\1/g;
+const ms = /https?:\/\/\S+/g, ps = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, Es = /0x[0-9a-fA-F]{4,}/g, Ss = /(?<!\d)\d{4,}(?!\d)/g, vs = /(['"])[^'"]{20,}\1/g;
 function Ts(n) {
-  return n.replace(ms, "[URL]").replace(ps, "[ID]").replace(Ss, "[ADDR]").replace(Es, "[N]").replace(vs, "$1[VAR]$1").toLowerCase().trim();
+  return n.replace(ms, "[URL]").replace(ps, "[ID]").replace(Es, "[ADDR]").replace(Ss, "[N]").replace(vs, "$1[VAR]$1").toLowerCase().trim();
 }
 function qe(n) {
   const e = n.search(/[?#]/);
@@ -1211,7 +1211,7 @@ class ws extends _ {
 }
 const As = new Set(Object.values(u));
 class Ms extends _ {
-  dataSenders;
+  sender = null;
   emitter;
   timeManager;
   recentEventFingerprints = /* @__PURE__ */ new Map();
@@ -1242,9 +1242,9 @@ class Ms extends _ {
    * @param emitter - Optional event emitter for local event consumption
    */
   constructor(e, t = null) {
-    super(), this.emitter = t, this.timeManager = new ws(), this.dataSenders = [];
+    super(), this.emitter = t, this.timeManager = new ws();
     const s = this.get("apiUrl");
-    s && this.dataSenders.push(new Is(e, s)), this.saveSessionCountsDebounced = this.debounce((i) => {
+    s && (this.sender = new Is(e, s)), this.saveSessionCountsDebounced = this.debounce((i) => {
       this.saveSessionCounts(i);
     }, 500), this.cleanupExpiredSessionCounts();
   }
@@ -1266,20 +1266,22 @@ class Ms extends _ {
    * successful network transmission.
    */
   async recoverPersistedEvents() {
-    const e = this.dataSenders.map(
-      async (t) => t.recoverPersistedEvents({
-        onSuccess: (s, i, r) => {
-          if (i && i.length > 0) {
-            const o = i.map((l) => l.id);
-            this.removeProcessedEvents(o), r && this.emitEventsQueue(r);
+    if (this.sender)
+      try {
+        await this.sender.recoverPersistedEvents({
+          onSuccess: (e, t, s) => {
+            if (t && t.length > 0) {
+              const i = t.map((r) => r.id);
+              this.removeProcessedEvents(i), s && this.emitEventsQueue(s);
+            }
+          },
+          onFailure: () => {
+            a("debug", "Failed to recover persisted events");
           }
-        },
-        onFailure: () => {
-          a("debug", "Failed to recover persisted events");
-        }
-      })
-    );
-    await Promise.allSettled(e);
+        });
+      } catch (e) {
+        a("debug", "Failed to recover persisted events", { error: e });
+      }
   }
   /**
    * Tracks a user interaction event and adds it to the event queue.
@@ -1374,25 +1376,25 @@ class Ms extends _ {
       data: { sessionId: h }
     }), !p && !this.checkRateLimit())
       return;
-    const S = e;
+    const E = e;
     if (!p) {
       if (this.sessionEventCounts.total >= 1e3) {
         a("warn", "Session event limit reached", {
           data: {
-            type: S,
+            type: E,
             total: this.sessionEventCounts.total,
             limit: 1e3
           }
         });
         return;
       }
-      const T = this.getTypeLimitForEvent(S);
+      const T = this.getTypeLimitForEvent(E);
       if (T) {
-        const oe = this.sessionEventCounts[S];
+        const oe = this.sessionEventCounts[E];
         if (oe !== void 0 && oe >= T) {
           a("warn", "Session event type limit reached", {
             data: {
-              type: S,
+              type: E,
               count: oe,
               limit: T
             }
@@ -1401,14 +1403,14 @@ class Ms extends _ {
         }
       }
     }
-    if (S === u.CUSTOM && o?.name) {
+    if (E === u.CUSTOM && o?.name) {
       const T = this.get("config")?.maxSameEventPerMinute ?? 60;
       if (!this.checkPerEventRateLimit(o.name, T))
         return;
     }
-    const pt = S === u.SESSION_START, St = t || this.get("pageUrl"), W = this.buildEventPayload({
-      type: S,
-      page_url: St,
+    const pt = E === u.SESSION_START, Et = t || this.get("pageUrl"), W = this.buildEventPayload({
+      type: E,
+      page_url: Et,
       from_page_url: s,
       scroll_data: i,
       click_data: r,
@@ -1417,7 +1419,7 @@ class Ms extends _ {
       error_data: c,
       page_view: d
     });
-    if (W && !(!p && S !== u.WEB_VITALS && !this.shouldSample())) {
+    if (W && !(!p && E !== u.WEB_VITALS && !this.shouldSample())) {
       if (pt) {
         const T = this.get("sessionId");
         if (!T) {
@@ -1433,7 +1435,7 @@ class Ms extends _ {
         this.set("hasStartSession", !0);
       }
       if (!this.isDuplicateEvent(W)) {
-        if (this.get("mode") === Z.QA && S === u.CUSTOM && o) {
+        if (this.get("mode") === Z.QA && E === u.CUSTOM && o) {
           a("info", `Custom Event: ${o.name}`, {
             visibility: "qa",
             data: {
@@ -1444,7 +1446,7 @@ class Ms extends _ {
           return;
         }
         if (this.addToQueue(W), !p) {
-          this.sessionEventCounts.total++, this.sessionEventCounts[S] !== void 0 && this.sessionEventCounts[S]++;
+          this.sessionEventCounts.total++, this.sessionEventCounts[E] !== void 0 && this.sessionEventCounts[E]++;
           const T = this.get("sessionId");
           T && this.saveSessionCountsDebounced && this.saveSessionCountsDebounced(T);
         }
@@ -1489,9 +1491,7 @@ class Ms extends _ {
       [u.PAGE_VIEW]: 0,
       [u.CUSTOM]: 0,
       [u.SCROLL]: 0
-    }, this.lastSessionId = null, this.set("hasStartSession", !1), this.dataSenders.forEach((t) => {
-      t.stop();
-    });
+    }, this.lastSessionId = null, this.set("hasStartSession", !1), this.sender?.stop();
   }
   /**
    * Flushes all events in the queue asynchronously.
@@ -1515,7 +1515,7 @@ class Ms extends _ {
    * @returns Promise resolving to `true` if the endpoint accepted the batch
    *          during this call (optimistic removal — failures persist for
    *          retry). `false` if no events, all
-   *          senders failed, or a flush is already in flight.
+   *          the send failed, or a flush is already in flight.
    *
    * @example
    * ```typescript
@@ -1554,7 +1554,7 @@ class Ms extends _ {
    * Mirrors `flushImmediately()`'s behaviour for the same condition.
    *
    * @returns `true` if the endpoint accepted the beacon batch
-   *          *during this call*, `false` otherwise (no events, all senders
+   *          *during this call*, `false` otherwise (no events, the send
    *          failed, or the call was deferred behind an in-flight async send)
    *
    * @example
@@ -1680,9 +1680,6 @@ class Ms extends _ {
   clearSendTimeout() {
     this.sendTimeoutId !== null && (clearTimeout(this.sendTimeoutId), this.sendTimeoutId = null);
   }
-  isSuccessfulResult(e) {
-    return e.status === "fulfilled" && e.value === !0;
-  }
   /**
    * Groups the queue by frozen `_session_id`, preserving insertion order.
    * Single pass — `buildBatchesWithIds()` builds one batch + one eventIds list
@@ -1733,7 +1730,7 @@ class Ms extends _ {
     const t = this.buildBatchesWithIds();
     if (t.length === 0)
       return e ? !0 : Promise.resolve(!0);
-    if (this.dataSenders.length === 0) {
+    if (!this.sender) {
       for (const { batch: s, eventIds: i } of t)
         this.removeProcessedEvents(i), this.emitEventsQueue(s);
       return this.clearSendTimeout(), e ? !0 : Promise.resolve(!0);
@@ -1791,35 +1788,31 @@ class Ms extends _ {
    * queue and emit it locally. Failures persist for retry.
    */
   sendBatchSync(e, t) {
-    const i = this.dataSenders.map((r) => r.sendEventsQueueSync(e)).some((r) => r);
-    return i ? (this.removeProcessedEvents(t), this.emitEventsQueue(e)) : a("debug", "Sync send complete failure, events kept in queue for retry", {
+    const s = this.sender?.sendEventsQueueSync(e) === !0;
+    return s ? (this.removeProcessedEvents(t), this.emitEventsQueue(e)) : a("debug", "Sync send complete failure, events kept in queue for retry", {
       data: { eventCount: t.length, sessionId: e.session_id }
-    }), i;
+    }), s;
   }
   /**
    * Sends one batch asynchronously (fetch path).
    */
   async sendBatchAsync(e, t) {
-    let s = 0;
-    const i = this.dataSenders.map(
-      async (l) => l.sendEventsQueue(e, {
-        onFailure: (c) => {
-          c && s++;
+    if (!this.sender)
+      return !1;
+    let s = !1, i = !1;
+    try {
+      i = await this.sender.sendEventsQueue(e, {
+        onFailure: (r) => {
+          s = r === !0;
         }
-      })
-    ), r = await Promise.allSettled(i), o = r.some((l) => this.isSuccessfulResult(l));
-    if (o) {
-      this.removeProcessedEvents(t), this.emitEventsQueue(e);
-      const l = r.filter((c) => !this.isSuccessfulResult(c)).length;
-      l > 0 && a("debug", "Async send completed with some failures, removed from queue and persisted", {
-        data: { eventCount: t.length, failedCount: l, sessionId: e.session_id }
       });
-    } else s === this.dataSenders.length ? (this.removeProcessedEvents(t), a("debug", "Batch rejected by the endpoint, events discarded", {
+    } catch {
+    }
+    return i ? (this.removeProcessedEvents(t), this.emitEventsQueue(e)) : s ? (this.removeProcessedEvents(t), a("debug", "Batch rejected by the endpoint, events discarded", {
       data: { eventCount: t.length, sessionId: e.session_id }
     })) : a("debug", "Async send complete failure, events kept in queue for retry", {
       data: { eventCount: t.length, sessionId: e.session_id }
-    });
-    return o;
+    }), i;
   }
   async sendEventsQueue() {
     if (!(this.eventsQueue.length === 0 || this.sendInProgress)) {
@@ -1827,7 +1820,7 @@ class Ms extends _ {
       try {
         const e = this.buildBatchesWithIds();
         if (e.length === 0) return;
-        if (this.dataSenders.length === 0) {
+        if (!this.sender) {
           for (const { batch: i, eventIds: r } of e)
             this.removeProcessedEvents(r), this.emitEventsQueue(i);
           return;
@@ -2887,7 +2880,7 @@ class Os extends _ {
     return e.hasAttribute(`${M}-name`) ? e : e.closest(`[${M}-name]`);
   }
   getRelevantClickElement(e) {
-    for (const t of Et)
+    for (const t of St)
       try {
         if (e.matches(t))
           return e;
@@ -3260,7 +3253,7 @@ class Ds extends _ {
     }
   };
   constructor(e) {
-    super(), this.eventManager = e, this.vitalThresholds = Qe(Ee);
+    super(), this.eventManager = e, this.vitalThresholds = Qe(Se);
   }
   /**
    * Starts tracking Web Vitals and performance metrics.
@@ -3277,7 +3270,7 @@ class Ds extends _ {
    * @returns Promise that resolves when tracking is initialized
    */
   async startTracking() {
-    const e = this.get("config"), t = e?.webVitalsMode ?? Ee;
+    const e = this.get("config"), t = e?.webVitalsMode ?? Se;
     this.vitalThresholds = Qe(t), e?.webVitalsThresholds && (this.vitalThresholds = { ...this.vitalThresholds, ...e.webVitalsThresholds }), this.isTracking = !0;
     try {
       await this.initWebVitals();
@@ -4138,7 +4131,7 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
 }, ie = function() {
   var n = Ce();
   return n && n.activationStart || 0;
-}, E = function(n, e) {
+}, S = function(n, e) {
   var t = Ce(), s = "navigate";
   return lt >= 0 ? s = "back-forward-cache" : t && (document.prerendering || ie() > 0 ? s = "prerender" : document.wasDiscarded ? s = "restore" : t.type && (s = t.type.replace(/_/g, "-"))), { name: n, value: e === void 0 ? -1 : e, rating: "good", delta: 0, entries: [], id: "v4-".concat(Date.now(), "-").concat(Math.floor(8999999999999 * Math.random()) + 1e12), navigationType: s };
 }, F = function(n, e, t) {
@@ -4197,20 +4190,20 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
   }), !0) : n();
 }, we = [1800, 3e3], ct = function(n, e) {
   e = e || {}, X((function() {
-    var t, s = Pe(), i = E("FCP"), r = F("paint", (function(o) {
+    var t, s = Pe(), i = S("FCP"), r = F("paint", (function(o) {
       o.forEach((function(l) {
         l.name === "first-contentful-paint" && (r.disconnect(), l.startTime < s.firstHiddenTime && (i.value = Math.max(l.startTime - ie(), 0), i.entries.push(l), t(!0)));
       }));
     }));
     r && (t = v(n, i, we, e.reportAllChanges), P((function(o) {
-      i = E("FCP"), t = v(n, i, we, e.reportAllChanges), Oe((function() {
+      i = S("FCP"), t = v(n, i, we, e.reportAllChanges), Oe((function() {
         i.value = performance.now() - o.timeStamp, t(!0);
       }));
     })));
   }));
 }, Ae = [0.1, 0.25], Ks = function(n, e) {
   e = e || {}, ct(re((function() {
-    var t, s = E("CLS", 0), i = 0, r = [], o = function(c) {
+    var t, s = S("CLS", 0), i = 0, r = [], o = function(c) {
       c.forEach((function(d) {
         if (!d.hadRecentInput) {
           var h = r[0], p = r[r.length - 1];
@@ -4221,7 +4214,7 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
     l && (t = v(n, s, Ae, e.reportAllChanges), $((function() {
       o(l.takeRecords()), t(!0);
     })), P((function() {
-      i = 0, s = E("CLS", 0), t = v(n, s, Ae, e.reportAllChanges), Oe((function() {
+      i = 0, s = S("CLS", 0), t = v(n, s, Ae, e.reportAllChanges), Oe((function() {
         return t();
       }));
     })), setTimeout(t, 0));
@@ -4262,7 +4255,7 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
   "PerformanceEventTiming" in self && "interactionId" in PerformanceEventTiming.prototype && (e = e || {}, X((function() {
     var t;
     Ys();
-    var s, i = E("INP"), r = function(l) {
+    var s, i = S("INP"), r = function(l) {
       ft((function() {
         l.forEach(Zs);
         var c = qs();
@@ -4272,12 +4265,12 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
     s = v(n, i, Me, e.reportAllChanges), o && (o.observe({ type: "first-input", buffered: !0 }), $((function() {
       r(o.takeRecords()), s(!0);
     })), P((function() {
-      ht = dt(), I.length = 0, Y.clear(), i = E("INP"), s = v(n, i, Me, e.reportAllChanges);
+      ht = dt(), I.length = 0, Y.clear(), i = S("INP"), s = v(n, i, Me, e.reportAllChanges);
     })));
   })));
 }, Ne = [2500, 4e3], fe = {}, tn = function(n, e) {
   e = e || {}, X((function() {
-    var t, s = Pe(), i = E("LCP"), r = function(c) {
+    var t, s = Pe(), i = S("LCP"), r = function(c) {
       e.reportAllChanges || (c = c.slice(-1)), c.forEach((function(d) {
         d.startTime < s.firstHiddenTime && (i.value = Math.max(d.startTime - ie(), 0), i.entries = [d], t());
       }));
@@ -4292,7 +4285,7 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
           return ft(l);
         }), { once: !0, capture: !0 });
       })), $(l), P((function(c) {
-        i = E("LCP"), t = v(n, i, Ne, e.reportAllChanges), Oe((function() {
+        i = S("LCP"), t = v(n, i, Ne, e.reportAllChanges), Oe((function() {
           i.value = performance.now() - c.timeStamp, fe[i.id] = !0, t(!0);
         }));
       }));
@@ -4306,11 +4299,11 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
   }), !0) : setTimeout(e, 0);
 }, nn = function(n, e) {
   e = e || {};
-  var t = E("TTFB"), s = v(n, t, be, e.reportAllChanges);
+  var t = S("TTFB"), s = v(n, t, be, e.reportAllChanges);
   sn((function() {
     var i = Ce();
     i && (t.value = Math.max(i.responseStart - ie(), 0), t.entries = [i], s(!0), P((function() {
-      t = E("TTFB", 0), (s = v(n, t, be, e.reportAllChanges))(!0);
+      t = S("TTFB", 0), (s = v(n, t, be, e.reportAllChanges))(!0);
     })));
   }));
 }, H = { passive: !0, capture: !0 }, rn = /* @__PURE__ */ new Date(), tt = function(n, e) {
@@ -4342,7 +4335,7 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
   }));
 }, Le = [100, 300], an = function(n, e) {
   e = e || {}, X((function() {
-    var t, s = Pe(), i = E("FID"), r = function(c) {
+    var t, s = Pe(), i = S("FID"), r = function(c) {
       c.startTime < s.firstHiddenTime && (i.value = c.processingStart - c.startTime, i.entries.push(c), t(!0));
     }, o = function(c) {
       c.forEach(r);
@@ -4351,7 +4344,7 @@ var Ie, N, x, at, se, lt = -1, P = function(n) {
       o(l.takeRecords()), l.disconnect();
     }))), P((function() {
       var c;
-      i = E("FID"), t = v(n, i, Le, e.reportAllChanges), se = [], x = -1, N = null, mt(addEventListener), c = r, se.push(c), gt();
+      i = S("FID"), t = v(n, i, Le, e.reportAllChanges), se = [], x = -1, N = null, mt(addEventListener), c = r, se.push(c), gt();
     })));
   }));
 };
