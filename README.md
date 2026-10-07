@@ -1,4 +1,14 @@
-# spoorly
+<p align="center">
+  <img src=".github/assets/banner.png" alt="spoorly: open source browser tracking" width="720">
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/spoorly"><img src="https://img.shields.io/npm/v/spoorly?color=orange" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/spoorly"><img src="https://img.shields.io/npm/dm/spoorly" alt="npm downloads"></a>
+  <a href="https://bundlephobia.com/package/spoorly"><img src="https://img.shields.io/bundlephobia/minzip/spoorly?label=gzip" alt="gzip size"></a>
+  <a href="https://github.com/nacorga/spoorly/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nacorga/spoorly/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/spoorly?color=blue" alt="license"></a>
+</p>
 
 Vendor-neutral browser autocapture: clicks, scroll, web vitals, errors, sessions and page views, sent to your own endpoint or forwarded to any analytics tool.
 
